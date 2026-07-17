@@ -620,6 +620,8 @@ def _hero_stats_block() -> Callable[[], None]:
 
 def _plans_block() -> Callable[[], None]:
     root = ui.column().classes("w-full gap-3")
+    # Guard against 5s timer wiping an open dialog.
+    editing = {"open": False}
 
     def open_editor(plan_id: int | None = None) -> None:
         existing = None
@@ -628,7 +630,10 @@ def _plans_block() -> Callable[[], None]:
                 if p.id == plan_id:
                     existing = p
                     break
-        with ui.dialog() as dialog, ui.card().classes("w-full max-w-xl"):
+        editing["open"] = True
+        with ui.dialog().props("persistent") as dialog, ui.card().classes(
+            "w-full max-w-xl"
+        ):
             ui.label("编辑计划" if existing else "新建计划").classes(
                 "text-lg font-semibold"
             )
@@ -662,6 +667,10 @@ def _plans_block() -> Callable[[], None]:
                 "启用", value=(existing.enabled if existing else True)
             )
 
+            def close_dialog() -> None:
+                editing["open"] = False
+                dialog.close()
+
             def save() -> None:
                 try:
                     payload = {
@@ -683,8 +692,8 @@ def _plans_block() -> Callable[[], None]:
                         return
                     save_plan(payload, workdir=state.workdir)
                     ui.notify("计划已保存", type="positive")
-                    dialog.close()
-                    refresh()
+                    close_dialog()
+                    refresh(force=True)
                 except Exception as exc:  # noqa: BLE001
                     notify_error(exc)
 
@@ -692,10 +701,13 @@ def _plans_block() -> Callable[[], None]:
                 ui.button("保存", color="primary", on_click=save).props(
                     f"background:{PRIMARY} !important;"
                 )
-                ui.button("取消", on_click=dialog.close).props("outline")
+                ui.button("取消", on_click=close_dialog).props("outline")
+            dialog.on("hide", lambda: editing.__setitem__("open", False))
         dialog.open()
 
-    def refresh() -> None:
+    def refresh(*, force: bool = False) -> None:
+        if editing["open"] and not force:
+            return
         root.clear()
         with root:
             with ui.row().classes("w-full items-center justify-between flex-wrap gap-2"):
@@ -785,14 +797,14 @@ def _plans_block() -> Callable[[], None]:
         try:
             n = import_plans_json(area.value or "", workdir=state.workdir)
             ui.notify(f"已导入 {n} 条计划", type="positive")
-            refresh()
+            refresh(force=True)
         except Exception as exc:  # noqa: BLE001
             notify_error(exc)
 
     def _toggle(plan_id: int, enabled: bool) -> None:
         try:
             set_plan_enabled(plan_id, enabled, workdir=state.workdir)
-            refresh()
+            refresh(force=True)
         except Exception as exc:  # noqa: BLE001
             notify_error(exc)
 
@@ -800,7 +812,7 @@ def _plans_block() -> Callable[[], None]:
         try:
             delete_plan(plan_id, workdir=state.workdir)
             ui.notify("已删除计划", type="positive")
-            refresh()
+            refresh(force=True)
         except Exception as exc:  # noqa: BLE001
             notify_error(exc)
 
@@ -809,7 +821,7 @@ def _plans_block() -> Callable[[], None]:
             try:
                 await run_plan_now(plan_id)
                 ui.notify("已触发执行", type="positive")
-                refresh()
+                refresh(force=True)
             except Exception as exc:  # noqa: BLE001
                 notify_error(exc)
 
@@ -828,8 +840,11 @@ def _plans_block() -> Callable[[], None]:
 
 def _accounts_block() -> Callable[[], None]:
     root = ui.column().classes("w-full gap-3")
+    dirty = {"editing": False}
 
-    def refresh() -> None:
+    def refresh(*, force: bool = False) -> None:
+        if dirty["editing"] and not force:
+            return
         root.clear()
         with root:
             ui.label("账号").classes("text-lg font-semibold")
@@ -855,8 +870,13 @@ def _accounts_block() -> Callable[[], None]:
                             "代理",
                             value=acc.proxy or "",
                             placeholder="socks5://host:port",
+                            on_change=lambda: dirty.__setitem__("editing", True),
                         ).classes("min-w-[280px]")
-                        enabled_in = ui.switch("启用", value=acc.enabled)
+                        enabled_in = ui.switch(
+                            "启用",
+                            value=acc.enabled,
+                            on_change=lambda: dirty.__setitem__("editing", True),
+                        )
 
                         def save(
                             name=acc.name, proxy_in=proxy_in, enabled_in=enabled_in
@@ -872,6 +892,7 @@ def _accounts_block() -> Callable[[], None]:
                                     workdir=state.workdir,
                                     session_dir=state.session_dir,
                                 )
+                                dirty["editing"] = False
                                 ui.notify(f"已保存 {name}", type="positive")
                             except Exception as exc:  # noqa: BLE001
                                 notify_error(exc)
@@ -935,6 +956,7 @@ def _build_dashboard(container) -> None:
             "text-2xl font-semibold tracking-wide mb-2"
         ).style(f"color:{INK};")
         refreshers: list[Callable[[], None]] = []
+        live_refreshers: list[Callable[[], None]] = []
         refresh_records: "SignRecordBlock"
 
         def refresh_all() -> None:
@@ -942,7 +964,9 @@ def _build_dashboard(container) -> None:
                 refresh()
 
         top_controls(refresh_all)
-        refreshers.append(_hero_stats_block())
+        hero = _hero_stats_block()
+        refreshers.append(hero)
+        live_refreshers.append(hero)
 
         with ui.tabs().classes("w-full") as tabs:
             tab_plans = ui.tab("计划表")
@@ -978,7 +1002,9 @@ def _build_dashboard(container) -> None:
                     with ui.tab_panel(tab_monitor):
                         refreshers.append(MonitorBlock(MONITOR_TEMPLATE))
             with ui.tab_panel(tab_jobs):
-                refreshers.append(_jobs_block())
+                jobs_refresh = _jobs_block()
+                refreshers.append(jobs_refresh)
+                live_refreshers.append(jobs_refresh)
             with ui.tab_panel(tab_users):
                 ui.label("查看当前已登录账户信息 (users/*/me.json)。").classes(
                     "text-gray-600"
@@ -994,8 +1020,13 @@ def _build_dashboard(container) -> None:
                 ui.label("查看日志文件的最新行。").classes("text-gray-600")
                 refreshers.append(log_block())
 
+        def soft_refresh() -> None:
+            # Auto timer: only live stats/history — never wipe plan/account forms/dialogs.
+            for refresh in live_refreshers:
+                refresh()
+
         refresh_all()
-        ui.timer(5.0, refresh_all)
+        ui.timer(5.0, soft_refresh)
 
 
 def _auth_gate(container, auth_code: str, on_success: Callable[[], None]) -> None:
