@@ -86,8 +86,9 @@ class JobRunner:
             workdir=self.workdir,
             loop=self.loop,
         )
-        # run_once => only_once + force_rerun; never stays in sign_at sleep loop
-        await signer.run_once(self.num_of_dialogs)
+        # only_once + force_rerun: schedule plan owns timing; ignore config.sign_at gate
+        # so a shared task config's fixed sign_at does not skip plan-driven runs.
+        await signer.run_once(self.num_of_dialogs, force_rerun=True)
 
     async def _run_automation(self, plan: SchedulePlan) -> None:
         # P1: thin adapter — run UserAutomation once if available

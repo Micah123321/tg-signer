@@ -742,15 +742,20 @@ def _plans_block() -> Callable[[], None]:
             _update_task_hint()
 
             schedule_in = ui.input(
-                "时刻/cron",
+                "时刻/cron（本计划执行时间）",
                 value=(existing.schedule_expr if existing else "06:00:00"),
                 placeholder="06:00:00 或 0 6 * * *",
-            ).classes("w-full")
+            ).classes("w-full").tooltip(
+                "调度器按此时间触发；与任务配置里的 sign_at 无关。"
+                "同一任务可被多条计划、多个账号在不同时刻引用。"
+            )
             random_in = ui.number(
                 "随机秒数",
                 value=(existing.random_seconds if existing else 0),
                 min=0,
-            ).classes("w-full")
+            ).classes("w-full").tooltip(
+                "在计划时刻基础上追加 0～N 秒抖动；覆盖任务配置里的 random_seconds。"
+            )
             retries_in = ui.number(
                 "最大重试",
                 value=(existing.max_retries if existing else 1),
@@ -874,7 +879,9 @@ def _plans_block() -> Callable[[], None]:
                             f"background:{color};color:#fff;border-radius:9999px;"
                         )
                     ui.label(
-                        f"调度 {plan.schedule_expr} · 下次 {plan.next_run_at or '—'} · 上次 {plan.last_run_at or '—'}"
+                        f"计划调度 {plan.schedule_expr}"
+                        f"{f' ±{plan.random_seconds}s' if plan.random_seconds else ''}"
+                        f" · 下次 {plan.next_run_at or '—'} · 上次 {plan.last_run_at or '—'}"
                     ).classes("text-sm text-gray-600")
                     with ui.row().classes("gap-2 flex-wrap mt-1"):
                         ui.button(

@@ -184,6 +184,11 @@ docker compose logs -f tg-signer-webui
    - 支持「立即执行」、启停、JSON 导入/导出  
    - **执行历史** 查看成功/失败/重试  
 
+   **谁决定执行时间？**  
+   - **以计划表的「时刻/cron」为准**（含计划上的随机秒）。调度到期后会 `run-once` 立刻执行动作。  
+   - 任务配置里的 `sign_at` / 随机延迟 **只给 CLI 常驻 `tg-signer run` 用**；`serve` 计划调度**不会**再按任务自带时间等待或拦截。  
+   - 同一任务名可被多条计划、多个账号在不同时刻引用；不必为每个时刻复制一份任务配置。
+
 4. **不要再**对同一账号任务：  
    - 主机 bash 循环 `run-once`  
    - 或 `docker compose --profile legacy-run` 的 CLI `run` 常驻  

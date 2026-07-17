@@ -74,20 +74,25 @@ class InteractiveSignerConfig:
                 ).props("outlined")
 
                 ui.input(
-                    label="签到时间 (Time or Cron)",
+                    label="任务自带签到时间 (CLI `run` 用)",
                     value=self.sign_at,
                     placeholder="06:00:00 or 0 6 * * *",
                     on_change=lambda e: setattr(self, "sign_at", e.value),
-                ).props("outlined")
+                ).props("outlined").tooltip(
+                    "仅 CLI 常驻 `tg-signer run` 读取。Web 计划表调度请在首页计划里设置时刻；"
+                    "serve 执行时会忽略此处时间。"
+                )
 
                 ui.number(
-                    label="随机延迟 (秒)",
+                    label="随机延迟 (秒，仅 CLI `run`)",
                     value=self.random_seconds,
                     min=0,
                     on_change=lambda e: setattr(
                         self, "random_seconds", int(e.value or 0)
                     ),
-                ).props("outlined")
+                ).props("outlined").tooltip(
+                    "仅 CLI 常驻 `run` 使用。计划表随机秒请在计划编辑的「随机秒数」填写。"
+                )
 
             # Chats Management
             with ui.row().classes("w-full items-center justify-between mb-2"):

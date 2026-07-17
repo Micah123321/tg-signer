@@ -1093,8 +1093,18 @@ class UserSigner(BaseUserWorker[SignConfigV3]):
             self.log(f"下次运行时间: {next_run}")
             await asyncio.sleep((next_run - now).total_seconds())
 
-    async def run_once(self, num_of_dialogs):
-        return await self.run(num_of_dialogs, only_once=True, force_rerun=True)
+    async def run_once(self, num_of_dialogs, *, force_rerun: bool = True):
+        """Run the sign task once then exit.
+
+        Used by CLI `run-once` and the runtime scheduler. Timing authority:
+
+        - Scheduler path should pass ``force_rerun=True`` so ``config.sign_at``
+          does not gate execution; the schedule plan owns *when* to run.
+        - Manual CLI keeps the same default for historical behaviour.
+        """
+        return await self.run(
+            num_of_dialogs, only_once=True, force_rerun=force_rerun
+        )
 
     async def send_text(
         self,
