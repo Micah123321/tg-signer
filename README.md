@@ -58,6 +58,19 @@ uv tool install -U "tg-signer[gui]"
 
 合法版本 tag 示例：`v0.9.0`、`0.9.0`、`v0.9.0b2`。`main` 每次 push 会自动编译并推送镜像。更细的目录结构、本地构建与 Compose 见 [docker/README.md](./docker/README.md)。
 
+#### 推荐：Docker Compose 一键部署（CLI + WebUI）
+
+需要同时常驻签到与 WebUI 时，使用仓库内 [deploy/](./deploy/) 目录（预构建 GHCR 镜像、共享数据卷）：
+
+```sh
+cd deploy
+cp .env.example .env   # 修改授权码、代理、任务名等
+# 首次：登录 + 配置签到任务（见 deploy/README.md）
+docker compose up -d
+```
+
+完整步骤（登录、任务配置、运维、故障排查）见 [deploy/README.md](./deploy/README.md)。
+
 #### 1. 准备数据目录
 
 配置、session、签到记录都会写在挂载目录中，请单独建目录并挂到容器内 `/opt/tg-signer`：

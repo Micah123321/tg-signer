@@ -168,6 +168,12 @@ docker run -d --name tg-signer \
 
 ## Docker Compose
 
+### 推荐：预构建镜像常驻部署（CLI + WebUI）
+
+长期运行签到 + WebUI 请使用仓库根目录下的 **[deploy/](../deploy/)**（`ghcr.io` 预构建镜像、`.env`、共享 `data/`）。本目录的 `docker-compose.yml` 面向**本地构建**调试，不是首选生产路径。详见 [deploy/README.md](../deploy/README.md)。
+
+### 本地构建 Compose（本目录）
+
 `docker-compose.yml` 默认基于 `CN.Dockerfile` 本地构建，并把**当前目录**挂到 `/opt/tg-signer`。
 
 可选：在数据目录放 `start.sh` 作为启动入口（方便改启动命令而不改 compose）：

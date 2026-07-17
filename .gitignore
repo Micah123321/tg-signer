@@ -78,6 +78,10 @@ celerybeat-schedule
 .env
 .apienv
 
+# deploy data (keep directory via .gitkeep)
+deploy/data/*
+!deploy/data/.gitkeep
+
 # virtualenv
 venv/
 ENV/

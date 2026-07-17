@@ -63,6 +63,21 @@ Valid version tag examples: `v0.9.0`, `0.9.0`, `v0.9.0b2`. Every push to `main`
 builds and publishes images automatically. For directory layout, local builds,
 and Compose, see [docker/README.md](./docker/README.md).
 
+#### Recommended: Docker Compose (CLI + WebUI)
+
+To run check-ins and the WebUI as long-lived services, use the [deploy/](./deploy/)
+directory (prebuilt GHCR images, shared data volume):
+
+```sh
+cd deploy
+cp .env.example .env   # set auth code, proxy, task name, etc.
+# First time: login + configure the sign task (see deploy/README.md)
+docker compose up -d
+```
+
+Full steps (login, task setup, ops, troubleshooting) are in
+[deploy/README.md](./deploy/README.md).
+
 #### 1. Prepare a data directory
 
 Configs, sessions, and check-in records are written into the mounted volume. Create

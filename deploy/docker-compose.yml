@@ -1,0 +1,48 @@
+# tg-signer 一键部署（预构建 GHCR 镜像）
+# 用法见 deploy/README.md
+#
+# 首次使用前请：
+#   1. cp .env.example .env 并按环境修改
+#   2. 完成 login 与任务配置（见 README）
+#   3. docker compose up -d
+
+services:
+  tg-signer:
+    image: ghcr.io/micah123321/tg-signer:${TG_IMAGE_TAG:-latest}
+    container_name: tg-signer
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      TG_PROXY: ${TG_PROXY:-}
+      TG_ACCOUNT: ${TG_ACCOUNT:-my_account}
+      TG_SESSION_STRING: ${TG_SESSION_STRING:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+    volumes:
+      - ./data:/opt/tg-signer
+    command: ["tg-signer", "run", "${TG_SIGN_TASK:-my_sign}"]
+
+  tg-signer-webui:
+    image: ghcr.io/micah123321/tg-signer:${TG_IMAGE_TAG:-latest}-webui
+    container_name: tg-signer-webui
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      TG_PROXY: ${TG_PROXY:-}
+      TG_ACCOUNT: ${TG_ACCOUNT:-my_account}
+      TG_SESSION_STRING: ${TG_SESSION_STRING:-}
+      TG_SIGNER_GUI_AUTHCODE: ${TG_SIGNER_GUI_AUTHCODE:-change-me}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+    volumes:
+      - ./data:/opt/tg-signer
+    ports:
+      - "${WEBUI_PORT:-8080}:8080"
+    # 显式 webgui：与 CLI `run` 双服务共存；勿改用 `serve`（内建调度会与 CLI run 双重定时）
+    command: ["tg-signer", "webgui", "--host", "0.0.0.0", "--port", "8080"]
