@@ -1,12 +1,9 @@
-# tg-signer 一键部署（预构建 GHCR 镜像）
+# tg-signer 一键部署
 # 用法见 deploy/README.md
 #
-# 最短路径：
-#   git clone https://github.com/Micah123321/tg-signer.git
-#   cd tg-signer/deploy
-#   cp .env.example .env
-#   docker compose up -d
-# 首次还需 login / 任务配置 / 计划表，见 README。
+# 镜像来源由 .env 的 TG_PULL_POLICY / TG_IMAGE_REGISTRY / TG_IMAGE_TAG 决定：
+#   预构建: TG_PULL_POLICY=missing（或 always）→ docker compose pull && up -d
+#   本地编译: TG_PULL_POLICY=build → git pull && docker compose up -d --build --force-recreate
 #
 # 可选：旧版单任务 CLI 常驻（profile: legacy-run）
 #   docker compose --profile legacy-run up -d
@@ -15,7 +12,14 @@
 services:
   # 主服务：Web 运维台 + 计划调度（多账号、多任务）
   tg-signer-webui:
-    image: ghcr.io/micah123321/tg-signer:${TG_IMAGE_TAG:-latest}-webui
+    image: ${TG_IMAGE_REGISTRY:-ghcr.io/micah123321/tg-signer}:${TG_IMAGE_TAG:-latest}-webui
+    pull_policy: ${TG_PULL_POLICY:-missing}
+    build:
+      context: ..
+      dockerfile: docker/GHCR.Dockerfile
+      target: webui
+      args:
+        TZ: ${TZ:-Asia/Shanghai}
     container_name: tg-signer-webui
     restart: unless-stopped
     env_file:
@@ -50,7 +54,14 @@ services:
   # docker compose --profile legacy-run up -d
   tg-signer:
     profiles: ["legacy-run"]
-    image: ghcr.io/micah123321/tg-signer:${TG_IMAGE_TAG:-latest}
+    image: ${TG_IMAGE_REGISTRY:-ghcr.io/micah123321/tg-signer}:${TG_IMAGE_TAG:-latest}
+    pull_policy: ${TG_PULL_POLICY:-missing}
+    build:
+      context: ..
+      dockerfile: docker/GHCR.Dockerfile
+      target: cli
+      args:
+        TZ: ${TZ:-Asia/Shanghai}
     container_name: tg-signer
     restart: unless-stopped
     env_file:

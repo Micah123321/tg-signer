@@ -2,9 +2,16 @@
 
 面向**只装 Docker、不装 Python** 的常驻部署。本目录默认跑 **Web 运维台 `serve`**（页面上管理多账号、计划表、执行历史），数据落在 `./data`。
 
-镜像构建说明见 [../docker/README.md](../docker/README.md)。
+镜像可用两种来源（在 `.env` 里选）：
 
-## 一键开始
+| 模式 | `.env` 要点 | 日常更新 |
+|------|-------------|----------|
+| **预构建（默认）** | `TG_IMAGE_REGISTRY=ghcr.io/micah123321/tg-signer`、`TG_IMAGE_TAG=latest`、`TG_PULL_POLICY=missing` | `docker compose pull && docker compose up -d` |
+| **本地编译** | `TG_IMAGE_REGISTRY=tg-signer`、`TG_IMAGE_TAG=local`、`TG_PULL_POLICY=build` | `git pull` 后 `docker compose up -d --build --force-recreate` |
+
+Dockerfile 见 [../docker/GHCR.Dockerfile](../docker/GHCR.Dockerfile)（`cli` / `webui` target）。
+
+## 一键开始（预构建）
 
 ```sh
 git clone https://github.com/Micah123321/tg-signer.git
@@ -18,22 +25,48 @@ docker compose up -d
 
 首次使用还需：**登录账号** + **配置签到任务** + **在计划表里分配时刻**（见下方完整步骤）。仅 `up -d` 不会自动完成 Telegram 登录。
 
-已有仓库时：
+### 已有仓库 · 预构建更新
 
 ```sh
 cd tg-signer/deploy   # 或你的 fork 路径
-git pull
-cp -n .env.example .env   # 已有 .env 则跳过
+git pull              # 可选：只更新部署文件/文档
+cp -n .env.example .env
 docker compose pull
 docker compose up -d
 ```
+
+### 本地源码编译
+
+适合改代码、跟 `main`、或暂时拉不到 GHCR 时。须在**完整 git 仓库**中操作（build context 为仓库根目录）。
+
+1. 编辑 `deploy/.env`（可从 `.env.example` 复制后改这三项）：
+
+```env
+TG_IMAGE_REGISTRY=tg-signer
+TG_IMAGE_TAG=local
+TG_PULL_POLICY=build
+```
+
+2. 首次或代码更新后：
+
+```sh
+cd tg-signer            # 仓库根
+git pull
+cd deploy
+cp -n .env.example .env # 已有 .env 则跳过；确认上面三项为 local/build
+docker compose up -d --build --force-recreate
+```
+
+等价镜像名：`tg-signer:local-webui`（WebUI）、`tg-signer:local`（legacy-run CLI）。
+
+`TG_PULL_POLICY=build` 时 Compose 会走本地 `build:`（`../docker/GHCR.Dockerfile`），不依赖 GHCR 上的 tag。仍建议保留 `--build`，确保 `git pull` 后层缓存按 Dockerfile 更新。
 
 ## 目录结构
 
 ```text
 deploy/
 ├── docker-compose.yml   # 默认：tg-signer-webui (serve)；可选 profile：legacy-run
-├── .env.example         # 环境变量模板
+├── .env.example         # 环境变量模板（含预构建 / 本地编译切换说明）
 ├── data/                # 挂载到容器 /opt/tg-signer
 └── README.md            # 本文件
 ```
@@ -46,8 +79,9 @@ deploy/
 
 ## 前置条件
 
-- Docker Engine + Compose 插件（`docker compose version` 可用）
-- 能拉取 `ghcr.io/micah123321/tg-signer`（建议 `TG_IMAGE_TAG=main` 或含 `serve` 的新版本）
+- Docker Engine + Compose 插件（`docker compose version` 可用；`pull_policy` 需 Compose V2.22+，过旧时用 `up --build` 即可）
+- **预构建**：能拉取 `ghcr.io/micah123321/tg-signer`（建议 `TG_IMAGE_TAG=main` 或含 `serve` 的新版本）
+- **本地编译**：完整克隆本仓库（含 `docker/GHCR.Dockerfile`），构建时不强制访问 GHCR
 - 若 Telegram 需代理：宿主机或可达的代理地址
 
 ## 推荐模式：Web 计划调度（替代 bash 串跑）
@@ -193,9 +227,12 @@ docker compose logs -f tg-signer-webui
 docker compose exec tg-signer-webui tg-signer list
 docker compose exec tg-signer-webui tg-signer -a a0 run-once sg-sign
 
-# 更新镜像并重建
+# 更新 · 预构建（TG_PULL_POLICY=missing|always）
 docker compose pull
 docker compose up -d
+
+# 更新 · 本地编译（TG_PULL_POLICY=build，先 git pull 仓库）
+docker compose up -d --build --force-recreate
 
 # 停止（保留 data/）
 docker compose down
@@ -231,8 +268,10 @@ command: ["tg-signer", "webgui", "--host", "0.0.0.0", "--port", "8080"]
 
 | 变量 | 用途 |
 |------|------|
-| `TG_IMAGE_TAG` | 镜像 tag；WebUI 使用 `${TG_IMAGE_TAG}-webui` |
-| `TZ` | 调度时区 |
+| `TG_IMAGE_REGISTRY` | 镜像名（不含 tag）。预构建：`ghcr.io/micah123321/tg-signer`；本地：`tg-signer` |
+| `TG_IMAGE_TAG` | tag 前缀。WebUI 实际为 `${TG_IMAGE_TAG}-webui`，CLI 为 `${TG_IMAGE_TAG}` |
+| `TG_PULL_POLICY` | Compose `pull_policy`：`missing`/`always` 走拉取；`build` 走本地编译 |
+| `TZ` | 调度时区（同时传入镜像 build-arg） |
 | `TG_PROXY` | 默认 Telegram 代理 |
 | `TG_ACCOUNT` | 默认账号名（CLI 未传 `-a` 时） |
 | `TG_SESSION_STRING` | 可选 session string |
@@ -254,7 +293,9 @@ command: ["tg-signer", "webgui", "--host", "0.0.0.0", "--port", "8080"]
 
 | 现象 | 可能原因 | 处理 |
 |------|----------|------|
-| `serve` / 未知命令 | 镜像过旧 | 将 `TG_IMAGE_TAG` 改为 `main` 或新版本后 `pull` |
+| `serve` / 未知命令 | 镜像过旧 | 预构建：`TG_IMAGE_TAG=main` 后 `pull`；或改本地 `TG_PULL_POLICY=build` 再 `--build` |
+| 本地 build 找不到 Dockerfile | 不在 monorepo / context 不对 | 在含 `docker/GHCR.Dockerfile` 的仓库内，于 `deploy/` 执行 compose |
+| `pull_policy` 不被识别 | Compose 过旧 | 升级 Docker Compose V2；或显式 `up --build` |
 | 计划不执行 | 未启用计划 / 无 session / 调度器未启动 | 确认用的是 `serve`；账号有 session；计划「启用」 |
 | 同账号冲突/限流 | 计划挤在同一时刻 | 错开时刻；同账号已串行，仍建议间隔 |
 | WebUI 打不开 | 端口占用 | 改 `WEBUI_PORT` |
@@ -272,5 +313,5 @@ command: ["tg-signer", "webgui", "--host", "0.0.0.0", "--port", "8080"]
 
 | 目录 | 职责 |
 |------|------|
-| **`deploy/`（本目录）** | 推荐：预构建镜像 Compose 常驻（默认 serve 运维台） |
-| **`docker/`** | Dockerfile、本地构建、参考 compose |
+| **`deploy/`（本目录）** | 推荐：Compose 常驻（默认 serve）；`.env` 可在 GHCR 预构建与本地 `GHCR.Dockerfile` 编译间切换 |
+| **`docker/`** | Dockerfile、发布用构建说明、历史/本地参考 compose |
