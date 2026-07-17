@@ -123,3 +123,4 @@ _test*.json
 .nicegui
 
 .agent
+.helloagents/

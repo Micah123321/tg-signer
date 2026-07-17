@@ -2,6 +2,8 @@ name: Publish Docker Image
 
 on:
   push:
+    branches:
+      - main
     tags:
       - '*'
   workflow_dispatch:
@@ -59,29 +61,47 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PUSH_TAG_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          PUSH_REF_NAME: ${{ github.ref_name }}
           MANUAL_IMAGE_TAG: ${{ inputs.image_tag }}
+          FULL_SHA: ${{ github.sha }}
         run: |
+          # GHCR image names must be lowercase
+          image="${REGISTRY}/${IMAGE_NAME,,}"
+          short_sha="${FULL_SHA:0:7}"
+
           if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
             ref_name="${MANUAL_IMAGE_TAG}"
+            if [[ ! "${ref_name}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+              echo "Unsupported Docker tag format: ${ref_name}" >&2
+              exit 1
+            fi
+            version_tag="${ref_name}${{ matrix.tag_suffix }}"
+            tags="${image}:${version_tag}"
+          elif [[ "${EVENT_NAME}" == "push" && "${REF_TYPE}" == "tag" ]]; then
+            ref_name="${PUSH_REF_NAME}"
+            if [[ ! "${ref_name}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+              echo "Unsupported Docker tag format: ${ref_name}" >&2
+              exit 1
+            fi
+            version_tag="${ref_name}${{ matrix.tag_suffix }}"
+            tags="${image}:${version_tag}"
+            tags+=$'\n'"${image}:${{ matrix.latest_tag }}"
+          elif [[ "${EVENT_NAME}" == "push" && "${REF_TYPE}" == "branch" ]]; then
+            # main (and any future branch listed under on.push.branches)
+            version_tag="${short_sha}${{ matrix.tag_suffix }}"
+            tags="${image}:${short_sha}${{ matrix.tag_suffix }}"
+            tags+=$'\n'"${image}:main${{ matrix.tag_suffix }}"
+            tags+=$'\n'"${image}:${{ matrix.latest_tag }}"
           else
-            ref_name="${PUSH_TAG_NAME}"
-          fi
-
-          image="${REGISTRY}/${IMAGE_NAME}"
-
-          if [[ ! "${ref_name}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-            echo "Unsupported Docker tag format: ${ref_name}" >&2
+            echo "Unsupported event: ${EVENT_NAME} / ${REF_TYPE}" >&2
             exit 1
           fi
 
           {
-            echo "version_tag=${ref_name}${{ matrix.tag_suffix }}"
+            echo "version_tag=${version_tag}"
             echo "tags<<EOF"
-            echo "${image}:${ref_name}${{ matrix.tag_suffix }}"
-            if [[ "${EVENT_NAME}" == "push" ]]; then
-              echo "${image}:${{ matrix.latest_tag }}"
-            fi
+            echo "${tags}"
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 

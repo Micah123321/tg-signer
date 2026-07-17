@@ -15,39 +15,158 @@
 
 ### 安装
 
-需要Python3.10及以上
+需要 [uv](https://docs.astral.sh/uv/) 与 Python 3.10 及以上。推荐用 `uv tool` 安装 CLI（隔离环境，自动放到 PATH）：
 
 ```sh
-pip install -U tg-signer
+uv tool install -U tg-signer
 ```
 
 或者为了提升程序速度：
 
 ```sh
-pip install "tg-signer[speedup]"
+uv tool install -U "tg-signer[speedup]"
 ```
 
 启用 YAML 配置支持：
 
 ```sh
-pip install "tg-signer[yaml]"
+uv tool install -U "tg-signer[yaml]"
 ```
+
+也可写成：`uv tool install -U "tg-signer[speedup,yaml,gui]"` 一次装齐可选依赖。
+
 #### WebUI
 tg-signer附带了一个WebUI，安装命令:
 ```sh
-pip install "tg-signer[gui]"
+uv tool install -U "tg-signer[gui]"
 ```
 
 ![webgui](./assets/webui.jpeg)
 
 
-### Docker
+### Docker（推荐：主机无需安装 Python）
 
-#### GitHub Container Registry
-在 GitHub Container Registry 提供了两种预构建镜像：`ghcr.io/amchii/tg-signer:<tag>`（CLI）和 `ghcr.io/amchii/tg-signer:<tag>-webui`（CLI + WebUI）。
+预构建镜像发布在 GitHub Container Registry，主机只需 Docker 即可完成登录、配置、签到、自动化与 WebUI。
 
-#### 本地
-如果需要自行构建镜像，本地 build 方式仍然保留，见 [docker](./docker) 目录下的 Dockerfile 和 [README](./docker/README.md) 。
+| 镜像 | 说明 |
+|------|------|
+| `ghcr.io/micah123321/tg-signer:<tag>` | CLI（已含 `tgcrypto` 加速） |
+| `ghcr.io/micah123321/tg-signer:latest` | CLI latest（`main` 推送或版本 tag 时更新） |
+| `ghcr.io/micah123321/tg-signer:main` | CLI，跟踪 `main` 分支最新构建 |
+| `ghcr.io/micah123321/tg-signer:<tag>-webui` | CLI + WebUI |
+| `ghcr.io/micah123321/tg-signer:latest-webui` | WebUI latest（`main` 推送或版本 tag 时更新） |
+
+合法版本 tag 示例：`v0.9.0`、`0.9.0`、`v0.9.0b2`。`main` 每次 push 会自动编译并推送镜像。更细的目录结构、本地构建与 Compose 见 [docker/README.md](./docker/README.md)。
+
+#### 1. 准备数据目录
+
+配置、session、签到记录都会写在挂载目录中，请单独建目录并挂到容器内 `/opt/tg-signer`：
+
+```sh
+mkdir -p tg-signer-data
+cd tg-signer-data
+```
+
+#### 2. 登录（交互）
+
+```sh
+docker run -it --rm \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer login
+```
+
+- 代理按你的环境修改；Linux 访问宿主机代理常用 `172.17.0.1`，Docker Desktop（Windows/macOS）可用 `host.docker.internal`。
+- 不需要代理时去掉 `--env TG_PROXY=...` 即可。
+- 登录成功后，当前目录下会生成 `*.session` 与 `.signer/`。
+
+#### 3. 配置并运行签到
+
+首次可进容器交互配置，再以后台方式常驻：
+
+```sh
+# 交互配置（按提示创建任务，例如 my_sign）
+docker run -it --rm \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer run my_sign
+```
+
+配置完成后以后台运行：
+
+```sh
+docker run -d --name tg-signer \
+  --restart unless-stopped \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer run my_sign
+```
+
+常用运维：
+
+```sh
+docker logs -f tg-signer
+docker exec -it tg-signer tg-signer list
+docker exec -it tg-signer tg-signer run-once my_sign
+docker exec -it tg-signer tg-signer automation run my_auto
+```
+
+#### 4. WebUI 镜像
+
+```sh
+docker run -d --name tg-signer-webui \
+  --restart unless-stopped \
+  --volume "$PWD:/opt/tg-signer" \
+  --publish 8080:8080 \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  --env TG_SIGNER_GUI_AUTHCODE=change-me \
+  ghcr.io/micah123321/tg-signer:latest-webui
+```
+
+浏览器访问 `http://127.0.0.1:8080`，使用 `TG_SIGNER_GUI_AUTHCODE` 中的授权码进入。  
+镜像默认命令为 `tg-signer webgui --host 0.0.0.0 --port 8080`，一般无需再传 `command`。
+
+#### 5. 环境变量速查
+
+| 变量 | 用途 |
+|------|------|
+| `TG_PROXY` | Telegram 代理，如 `socks5://172.17.0.1:7890` |
+| `TG_ACCOUNT` | 账号名，对应 session 文件名（默认 `my_account`） |
+| `TG_SESSION_STRING` | 直接注入 session string（可选） |
+| `TZ` | 调度时区；未设置时回退本地时区，再回退 `Asia/Shanghai` |
+| `TG_SIGNER_GUI_AUTHCODE` | WebUI 访问授权码（强烈建议设置） |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` | 图片识别、计算题等 AI 能力（按需） |
+
+数据落盘约定（容器内相对 `/opt/tg-signer`）：
+
+- session：`./<account>.session`
+- 工作目录：`./.signer/`（配置、SQLite 签到记录、自动化状态等）
+- 日志：`./logs/`
+
+#### 6. 一次性命令示例
+
+与主机安装后用法相同，只是前缀换成 `docker run` / `docker exec`：
+
+```sh
+docker run --rm -v "$PWD:/opt/tg-signer" -e TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer send-text @neo hello
+
+docker run --rm -v "$PWD:/opt/tg-signer" -e TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer list-sign-records my_sign -n 5
+```
+
+#### 本地构建（可选）
+
+需要改镜像或使用国内 apt/pypi 源时，可在 [docker](./docker) 目录本地构建，说明见 [docker/README.md](./docker/README.md)。
 
 ### 使用方法
 
@@ -102,7 +221,7 @@ Commands:
   send-dice               发送一次DICE消息, 请确保当前会话已经"见过"该`chat_id`。...
   send-text               发送一次文本消息, 请确保当前会话已经"见过"该`chat_id`
   version                 Show version
-  webgui                  启动一个WebGUI（需要通过`pip install "tg-signer[gui]"`安装相关依赖）
+  webgui                  启动一个WebGUI（需要通过`uv tool install "tg-signer[gui]"`安装相关依赖）
 
 ```
 

@@ -42,16 +42,18 @@ This file guides agents/developers collaborating in the `tg-signer` repository. 
 - `tests/`: pytest test suite; there is already coverage for CLI, automation, check-in record migration, and message thread id behavior.
 
 ## Local Environment Conventions (Must Follow)
-- Always prefer the repository virtual environment (`.venv` or `venv`). Do not use the system Python directly.
-- Recommended first steps:
-  - `source .venv/bin/activate`
-  - `python -m pip install -e .`
+- Always use [uv](https://docs.astral.sh/uv/). Do not install with system `pip` or use the system Python directly.
+- Recommended first steps (from repo root):
+  - `uv sync --group dev`
+  - optional extras as needed: `uv sync --group dev --extra gui --extra yaml --extra speedup`
+  - run tools via `uv run …` (e.g. `uv run pytest`, `uv run ruff check`, `uv run tg-signer --help`)
 - Development dependencies are currently defined in `[dependency-groups].dev` in `pyproject.toml`; they are not an optional extra. Do not keep writing this as `.[dev]`.
-- If you need to complete the dev tooling set, make sure at least these are installed: `ruff`, `pytest`, `pytest-asyncio`, `tox`.
-- Optional capability dependencies:
-  - WebUI: `python -m pip install -e ".[gui]"`
-  - YAML: `python -m pip install -e ".[yaml]"`
-  - Speedup: `python -m pip install -e ".[speedup]"`
+- If you need to complete the dev tooling set, make sure at least these are installed: `ruff`, `pytest`, `pytest-asyncio`, `tox` (covered by `--group dev`).
+- Optional capability dependencies (extras):
+  - WebUI: `uv sync --extra gui` (or include with other flags above)
+  - YAML: `uv sync --extra yaml`
+  - Speedup: `uv sync --extra speedup`
+- End-user style install of a released package (outside this repo): `uv tool install -U "tg-signer[…]"`.
 
 ## Common Commands
 - Basic:

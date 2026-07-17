@@ -1,113 +1,241 @@
-## 先决条件
+# Docker 使用说明
 
-工作目录下添加`start.sh`:
+面向**主机不安装 Python** 的用法：直接使用 GHCR 预构建镜像，把数据目录挂载到容器即可。
 
-```sh
-pip install -U tg-signer
+根 README 中的 Docker 章节是精简版；本文件补充本地构建、Compose 与目录约定。
 
-# 首次配置时使用，后续注释掉
-sleep infinity
+## 镜像一览
 
-# 配置完成后取消注释
-# tg-signer run mytasks
-```
+| 镜像 | 内容 | 默认启动 |
+|------|------|----------|
+| `ghcr.io/micah123321/tg-signer:<tag>` / `:latest` | CLI + `tgcrypto` | 无固定 CMD，需传入 `tg-signer ...` |
+| `ghcr.io/micah123321/tg-signer:<tag>-webui` / `:latest-webui` | CLI + WebUI（nicegui） | `tg-signer webgui --host 0.0.0.0 --port 8080` |
 
-## 使用预构建镜像
+### 自动构建策略
 
-发布版本会同步到 GitHub Container Registry：
+| 触发 | 推送的镜像 tag（cli / webui） |
+|------|------------------------------|
+| `main` 分支 push | `:latest` / `:latest-webui`、`:main` / `:main-webui`、`:<short-sha>` / `:<short-sha>-webui` |
+| 推送合法 Git tag | `:<tag>` / `:<tag>-webui`，并同步更新 `latest` / `latest-webui` |
+| 手动 `workflow_dispatch` | 仅 `:<image_tag>` / `:<image_tag>-webui`（不覆盖 `latest`） |
 
-- `ghcr.io/amchii/tg-signer:<tag>`
-- `ghcr.io/amchii/tg-signer:latest`（当推送合法 Docker tag 格式的 Git tag，例如 `v0.0.0`、`0.0.0`、`v0.0.0-beta` 时更新）
-- `ghcr.io/amchii/tg-signer:<tag>-webui`
-- `ghcr.io/amchii/tg-signer:latest-webui`（当推送合法 Docker tag 格式的 Git tag，例如 `v0.0.0`、`0.0.0`、`v0.0.0-beta` 时更新）
-
-其中基础镜像默认包含 `speedup` 所需的 `tgcrypto`，`-webui` 变体会额外安装 `gui` 额外依赖（当前包含 `nicegui`）并默认监听 `8080` 端口。
-如果你需要使用国内镜像源或调整构建参数，仍然可以继续按下文方式在本地构建。
+合法 Docker tag 示例：`v0.9.0`、`0.9.0`、`v0.9.0b2`、7 位 commit short sha。
 
 ### 手动测试推送
 
-如果你只想测试 Docker 镜像，而不想因为推送 Git tag 触发 PyPI 发布，可以在 GitHub Actions 中手动运行 `Publish Docker Image` workflow：
+不想因推送 Git tag 触发 PyPI 发布时，可在 GitHub Actions 手动运行 `Publish Docker Image`：
 
 - `ref`：要构建的分支、提交或 tag
-- `image_tag`：本次测试镜像要推送到 GHCR 的 tag，例如 `manual-test`、`pr-123`、`sha-abcdef`
+- `image_tag`：推到 GHCR 的测试 tag，例如 `manual-test`、`pr-123`
 
-手动触发时只会推送你指定的测试 tag 和对应的 `-webui` tag，不会覆盖 `latest` 与 `latest-webui`。
+手动触发只推送指定 tag 与对应 `-webui`，不会覆盖 `latest` / `latest-webui`。
 
-### 直接运行预构建镜像
+## 推荐工作流（预构建镜像）
 
-CLI 镜像示例：
+### 1. 数据目录
 
 ```sh
-docker run -d --name tg-signer \
-  --volume $PWD:/opt/tg-signer \
-  --env TG_PROXY=socks5://172.17.0.1:7890 \
-  ghcr.io/amchii/tg-signer:latest bash start.sh
+mkdir -p tg-signer-data
+cd tg-signer-data
 ```
 
-WebUI 镜像示例：
+容器工作目录为 `/opt/tg-signer`，请始终把数据目录挂到这里。落盘内容：
+
+| 路径（相对挂载点） | 说明 |
+|--------------------|------|
+| `<account>.session` | Telegram session（默认 `my_account.session`） |
+| `.signer/` | 配置、SQLite 签到记录、自动化状态等 |
+| `logs/` | 日志 |
+
+### 2. 登录
+
+```sh
+docker run -it --rm \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer login
+```
+
+代理提示：
+
+- Linux 访问宿主机代理：常见为 `172.17.0.1`
+- Docker Desktop（Windows / macOS）：可用 `host.docker.internal`
+- 不需要代理：去掉 `TG_PROXY`
+
+### 3. 配置并后台运行签到
+
+```sh
+# 交互配置
+docker run -it --rm \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer run my_sign
+
+# 后台常驻
+docker run -d --name tg-signer \
+  --restart unless-stopped \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer run my_sign
+```
+
+运维：
+
+```sh
+docker logs -f tg-signer
+docker exec -it tg-signer tg-signer list
+docker exec -it tg-signer tg-signer run-once my_sign
+docker exec -it tg-signer tg-signer automation init my_auto
+docker exec -it tg-signer tg-signer automation run my_auto
+```
+
+### 4. WebUI
 
 ```sh
 docker run -d --name tg-signer-webui \
-  --volume $PWD:/opt/tg-signer \
+  --restart unless-stopped \
+  --volume "$PWD:/opt/tg-signer" \
   --publish 8080:8080 \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
   --env TG_SIGNER_GUI_AUTHCODE=change-me \
-  ghcr.io/amchii/tg-signer:latest-webui
+  ghcr.io/micah123321/tg-signer:latest-webui
 ```
 
-## 使用Dockerfile
+访问 `http://127.0.0.1:8080`，使用 `TG_SIGNER_GUI_AUTHCODE` 授权码进入。
 
-* ### 构建镜像：
+### 5. 环境变量
 
-    ```sh
-    docker build -t tg-signer:latest -f CN.Dockerfile .
-    ```
+| 变量 | 用途 |
+|------|------|
+| `TG_PROXY` | Telegram 代理 |
+| `TG_ACCOUNT` | 账号名 / session 文件名（默认 `my_account`） |
+| `TG_SESSION_STRING` | 直接注入 session string（可选） |
+| `TZ` | 调度时区（运行时优先；未设置则本地时区 → `Asia/Shanghai`） |
+| `TG_SIGNER_GUI_AUTHCODE` | WebUI 授权码 |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` | AI 能力（识图、计算题等） |
 
-* ### 运行
-
-    ```sh
-    docker run -d --name tg-signer --volume $PWD:/opt/tg-signer --env TG_PROXY=socks5://172.17.0.1:7890 tg-signer:latest bash start.sh
-    ```
-
-* ### 指定时区
-
-    调度命令会按 `TZ -> Python 本地时区 -> Asia/Shanghai` 的顺序解析时区。
-    如果希望容器内的签到时间按指定时区计算，运行时传入 `TZ` 即可。
-    构建镜像时也可以通过 `TZ` 参数让容器的系统时区保持一致，例如：
-
-    ```sh
-    docker build --build-arg TZ=Europe/Paris -t tg-signer:latest -f CN.Dockerfile .
-    ```
-
-    运行容器时再次设置环境变量确保 `TZ` 传递进去：
-
-    ```sh
-    docker run -d --name tg-signer \
-      --volume $PWD:/opt/tg-signer \
-      --env TG_PROXY=socks5://172.17.0.1:7890 \
-      --env TZ=Europe/Paris \
-      tg-signer:latest bash start.sh
-    ```
-
-## 或使用Docker Compose
+### 6. 一次性命令
 
 ```sh
-docker-compose up -d
+docker run --rm \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer send-text @neo hello
 ```
 
-### 可选：调整时区
+## 本地构建
 
-通过 `TZ` 环境变量可以在启动和构建期间一致地设置时区。运行时会优先读取 `TZ`；如果未设置，则回退到 Python 本地时区，再回退到 `Asia/Shanghai`。示例：
+仓库内 Dockerfile：
+
+| 文件 | 用途 |
+|------|------|
+| `GHCR.Dockerfile` | 官方多阶段发布（`cli` / `webui` target） |
+| `Dockerfile` | 通用本地构建（从 PyPI 安装） |
+| `CN.Dockerfile` | 国内镜像源（清华 apt + PyPI） |
+
+在 `docker/` 目录下执行：
 
 ```sh
+# 通用
+docker build -t tg-signer:latest -f Dockerfile .
+
+# 国内源
+docker build -t tg-signer:latest -f CN.Dockerfile .
+
+# 指定系统时区写入镜像
+docker build --build-arg TZ=Europe/Paris -t tg-signer:latest -f CN.Dockerfile .
+```
+
+本地镜像运行（与预构建相同，只是镜像名不同）：
+
+```sh
+docker run -d --name tg-signer \
+  --restart unless-stopped \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  tg-signer:latest \
+  tg-signer run my_sign
+```
+
+## Docker Compose
+
+`docker-compose.yml` 默认基于 `CN.Dockerfile` 本地构建，并把**当前目录**挂到 `/opt/tg-signer`。
+
+可选：在数据目录放 `start.sh` 作为启动入口（方便改启动命令而不改 compose）：
+
+```sh
+#!/bin/bash
+set -e
+# 首次配置可先 sleep infinity，exec 进容器配置后再改回业务命令
+tg-signer run my_sign
+```
+
+```sh
+chmod +x start.sh
+# 在 docker/ 目录或按 compose 中的 context 调整后：
+docker compose up -d
+# 或指定时区
 TZ=Europe/Paris docker compose up -d
 ```
 
-如果还需要让镜像内的系统时区文件一起更新（例如从 `docker compose build` 构建自定义镜像），也可以在构建时加上同样的 `TZ` 环境变量：
+进入容器：
 
 ```sh
-TZ=Europe/Paris docker compose build
+docker exec -it tg-signer bash
+# 或直接执行子命令
+docker exec -it tg-signer tg-signer login
 ```
+
+若希望 Compose 直接使用预构建镜像而不是本地 build，可将 service 改为：
+
+```yaml
+services:
+  tg-signer:
+    image: ghcr.io/micah123321/tg-signer:latest
+    container_name: tg-signer
+    command: ["tg-signer", "run", "my_sign"]
+    volumes:
+      - $PWD:/opt/tg-signer
+    environment:
+      - TG_PROXY=socks5://172.17.0.1:7890
+      - TZ=${TZ:-Asia/Shanghai}
+    restart: unless-stopped
+```
+
+WebUI Compose 示例：
+
+```yaml
+services:
+  tg-signer-webui:
+    image: ghcr.io/micah123321/tg-signer:latest-webui
+    container_name: tg-signer-webui
+    volumes:
+      - $PWD:/opt/tg-signer
+    ports:
+      - "8080:8080"
+    environment:
+      - TG_PROXY=socks5://172.17.0.1:7890
+      - TZ=${TZ:-Asia/Shanghai}
+      - TG_SIGNER_GUI_AUTHCODE=change-me
+    restart: unless-stopped
+```
+
+## 时区
+
+调度命令解析顺序：`TZ` 环境变量 → 容器本地时区 → `Asia/Shanghai`。
+
+- 运行时：`--env TZ=Europe/Paris` 或 compose 中的 `TZ=...`
+- 本地构建时：`--build-arg TZ=Europe/Paris` 可同步写入系统时区文件
 
 ## 配置任务
 
-接下来即可执行 `docker exec -it tg-signer bash` 进入容器进行登录和配置任务操作，见 [README.md](/README.md)。
+登录与任务配置细节（动作流、automation、monitor 等）见仓库根目录 [README.md](../README.md)。容器内命令与主机安装后完全相同，只需通过 `docker run` / `docker exec` 调用。

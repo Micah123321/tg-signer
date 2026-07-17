@@ -14,41 +14,170 @@
 
 ### Installation
 
-Requires Python 3.10 or above.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.10 or above. Prefer
+`uv tool` for the CLI (isolated env, binary on PATH):
 
 ```sh
-pip install -U tg-signer
+uv tool install -U tg-signer
 ```
 
 Or install the performance extras:
 
 ```sh
-pip install "tg-signer[speedup]"
+uv tool install -U "tg-signer[speedup]"
 ```
+
+YAML config support:
+
+```sh
+uv tool install -U "tg-signer[yaml]"
+```
+
+You can also combine extras in one command, for example:
+`uv tool install -U "tg-signer[speedup,yaml,gui]"`.
 
 #### WebUI
 
 `tg-signer` also ships with a WebUI. Install it with:
 
 ```sh
-pip install "tg-signer[gui]"
+uv tool install -U "tg-signer[gui]"
 ```
 
 ![webgui](./assets/webui.jpeg)
 
-### Docker
+### Docker (Recommended: no host Python required)
 
-#### GitHub Container Registry
+Prebuilt images are published on GitHub Container Registry. With Docker alone you
+can log in, configure tasks, run check-ins/automation, and use the WebUI.
 
-Two prebuilt images are published on GitHub Container Registry:
-`ghcr.io/amchii/tg-signer:<tag>` (CLI) and
-`ghcr.io/amchii/tg-signer:<tag>-webui` (CLI + WebUI).
+| Image | Description |
+|-------|-------------|
+| `ghcr.io/micah123321/tg-signer:<tag>` | CLI (includes `tgcrypto` speedup) |
+| `ghcr.io/micah123321/tg-signer:latest` | CLI latest (updated on `main` pushes and version tags) |
+| `ghcr.io/micah123321/tg-signer:main` | CLI tracking the latest `main` build |
+| `ghcr.io/micah123321/tg-signer:<tag>-webui` | CLI + WebUI |
+| `ghcr.io/micah123321/tg-signer:latest-webui` | WebUI latest (updated on `main` pushes and version tags) |
 
-#### Local
+Valid version tag examples: `v0.9.0`, `0.9.0`, `v0.9.0b2`. Every push to `main`
+builds and publishes images automatically. For directory layout, local builds,
+and Compose, see [docker/README.md](./docker/README.md).
 
-If you want to build the image yourself, the local build flow is still available.
-See the Dockerfiles in the [docker](./docker) directory and its
-[README](./docker/README.md).
+#### 1. Prepare a data directory
+
+Configs, sessions, and check-in records are written into the mounted volume. Create
+a dedicated directory and mount it to `/opt/tg-signer` in the container:
+
+```sh
+mkdir -p tg-signer-data
+cd tg-signer-data
+```
+
+#### 2. Login (interactive)
+
+```sh
+docker run -it --rm \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer login
+```
+
+- Adjust the proxy for your environment. On Linux, `172.17.0.1` is commonly used to
+  reach a proxy on the host; on Docker Desktop (Windows/macOS), prefer
+  `host.docker.internal`.
+- Omit `--env TG_PROXY=...` if you do not need a proxy.
+- After a successful login, `*.session` and `.signer/` appear in the current directory.
+
+#### 3. Configure and run check-ins
+
+Configure interactively first, then run as a long-lived container:
+
+```sh
+# Interactive setup (creates a task such as my_sign)
+docker run -it --rm \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer run my_sign
+```
+
+After configuration, run in the background:
+
+```sh
+docker run -d --name tg-signer \
+  --restart unless-stopped \
+  --volume "$PWD:/opt/tg-signer" \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer run my_sign
+```
+
+Day-to-day operations:
+
+```sh
+docker logs -f tg-signer
+docker exec -it tg-signer tg-signer list
+docker exec -it tg-signer tg-signer run-once my_sign
+docker exec -it tg-signer tg-signer automation run my_auto
+```
+
+#### 4. WebUI image
+
+```sh
+docker run -d --name tg-signer-webui \
+  --restart unless-stopped \
+  --volume "$PWD:/opt/tg-signer" \
+  --publish 8080:8080 \
+  --env TG_PROXY=socks5://172.17.0.1:7890 \
+  --env TZ=Asia/Shanghai \
+  --env TG_SIGNER_GUI_AUTHCODE=change-me \
+  ghcr.io/micah123321/tg-signer:latest-webui
+```
+
+Open `http://127.0.0.1:8080` and enter the auth code from
+`TG_SIGNER_GUI_AUTHCODE`. The image default command is
+`tg-signer webgui --host 0.0.0.0 --port 8080`, so you usually do not need an extra
+`command`.
+
+#### 5. Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `TG_PROXY` | Telegram proxy, e.g. `socks5://172.17.0.1:7890` |
+| `TG_ACCOUNT` | Account name / session filename (default `my_account`) |
+| `TG_SESSION_STRING` | Inject a session string directly (optional) |
+| `TZ` | Schedule time zone; falls back to the local zone, then `Asia/Shanghai` |
+| `TG_SIGNER_GUI_AUTHCODE` | WebUI access code (strongly recommended) |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` | AI features such as image OCR and math replies (as needed) |
+
+Data layout under `/opt/tg-signer` in the container:
+
+- session: `./<account>.session`
+- workdir: `./.signer/` (configs, SQLite records, automation state, …)
+- logs: `./logs/`
+
+#### 6. One-shot command examples
+
+Same commands as a host install, just via `docker run` / `docker exec`:
+
+```sh
+docker run --rm -v "$PWD:/opt/tg-signer" -e TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer send-text @neo hello
+
+docker run --rm -v "$PWD:/opt/tg-signer" -e TZ=Asia/Shanghai \
+  ghcr.io/micah123321/tg-signer:latest \
+  tg-signer list-sign-records my_sign -n 5
+```
+
+#### Local build (optional)
+
+For custom images or China-friendly apt/PyPI mirrors, build from the
+[docker](./docker) directory. See [docker/README.md](./docker/README.md).
 
 ### Usage
 
@@ -112,7 +241,7 @@ Commands:
                           already "seen" this `chat_id`
   version                 Show version
   webgui                  Start the WebGUI (requires
-                          `pip install "tg-signer[gui]"`)
+                          `uv tool install "tg-signer[gui]"`)
 ```
 
 Examples:

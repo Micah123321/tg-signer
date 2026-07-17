@@ -29,7 +29,7 @@ tg-signer automation init my_auto
 
 如果想用 YAML：
 ```sh
-pip install "tg-signer[yaml]"
+uv tool install -U "tg-signer[yaml]"
 # 使用 config.yaml / config.yml 也可被自动识别
 ```
 
@@ -237,7 +237,7 @@ HANDLERS = {"echo": echo}
 - 可先给 timer 配一个 `interval_seconds`，确保至少触发一次。
 
 3. YAML 读不出来？
-- 确认已安装 `pyyaml`：`pip install "tg-signer[yaml]"`。
+- 确认已安装 `pyyaml`：`uv tool install -U "tg-signer[yaml]"`。
 
 4. AI 相关 handler 报错？
 - 先配置 `OPENAI_API_KEY`（或运行 `tg-signer llm-config`）。

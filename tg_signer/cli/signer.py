@@ -607,7 +607,7 @@ def migrate_sign_records(obj, legacy_user_id: str | None, delete_json: bool):
 
 @tg_signer.command(
     name="webgui",
-    help="启动一个WebGUI（需要通过`pip install tg-signer[gui]`安装相关依赖）",
+    help="启动一个WebGUI（需要通过`uv tool install \"tg-signer[gui]\"`安装相关依赖）",
 )
 @click.option("--host", "-H", "host", default="127.0.0.1", help="监听地址")
 @click.option("--port", "-P", "port", default=8080, help="监听端口")
