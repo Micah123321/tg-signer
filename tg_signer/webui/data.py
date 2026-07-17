@@ -73,6 +73,31 @@ def list_task_names(
     return sorted([p.name for p in root.iterdir() if p.is_dir()])
 
 
+def list_automation_task_names(
+    workdir: Optional[Path | str] = None,
+) -> List[str]:
+    """List automation task dirs (config is account-agnostic, shared by plans)."""
+    root = get_workdir(workdir) / "automations"
+    if not root.is_dir():
+        return []
+    return sorted([p.name for p in root.iterdir() if p.is_dir()])
+
+
+def list_task_refs_for_plan(
+    task_type: str,
+    workdir: Optional[Path | str] = None,
+) -> List[str]:
+    """Task names selectable for a schedule plan (reuse across accounts)."""
+    kind = (task_type or "sign").strip().lower()
+    if kind == "sign":
+        return list_task_names("signer", workdir)
+    if kind == "monitor":
+        return list_task_names("monitor", workdir)
+    if kind == "automation":
+        return list_automation_task_names(workdir)
+    return []
+
+
 def load_config(
     kind: ConfigKind, name: str, workdir: Optional[Path | str] = None
 ) -> ConfigEntry:

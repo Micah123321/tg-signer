@@ -22,6 +22,7 @@ from tg_signer.webui.data import (
     list_log_files,
     list_plans,
     list_task_names,
+    list_task_refs_for_plan,
     load_config,
     load_logs,
     load_sign_records,
@@ -631,23 +632,115 @@ def _plans_block() -> Callable[[], None]:
                     existing = p
                     break
         editing["open"] = True
+
+        # Account options: session discovery + names already used by plans.
+        account_opts = [
+            a.name for a in list_accounts(state.workdir, state.session_dir)
+        ]
+        for p in list_plans(state.workdir):
+            if p.account and p.account not in account_opts:
+                account_opts.append(p.account)
+        if existing and existing.account and existing.account not in account_opts:
+            account_opts.insert(0, existing.account)
+        account_opts = sorted(set(account_opts), key=str.lower)
+
+        initial_type = (existing.task_type if existing else "sign") or "sign"
+        task_opts = list(list_task_refs_for_plan(initial_type, state.workdir))
+        if existing and existing.task_ref and existing.task_ref not in task_opts:
+            task_opts = [existing.task_ref] + task_opts
+
         with ui.dialog().props("persistent") as dialog, ui.card().classes(
             "w-full max-w-xl"
         ):
             ui.label("编辑计划" if existing else "新建计划").classes(
                 "text-lg font-semibold"
             )
-            account_in = ui.input(
-                "账号", value=(existing.account if existing else "")
-            ).classes("w-full")
+            ui.label(
+                "同一任务名可被多个账号复用；任务配置与账号无关。"
+            ).classes("text-sm text-gray-500")
+
+            if account_opts:
+                account_in = ui.select(
+                    label="账号",
+                    options=account_opts,
+                    value=(
+                        existing.account
+                        if existing and existing.account in account_opts
+                        else (account_opts[0] if account_opts else None)
+                    ),
+                    with_input=True,
+                ).classes("w-full")
+            else:
+                account_in = ui.input(
+                    "账号",
+                    value=(existing.account if existing else ""),
+                    placeholder="请先 login 生成 session，或手动填写账号名",
+                ).classes("w-full")
+                ui.label(
+                    "未发现 session：请先 CLI/docker login，或手动输入账号名。"
+                ).classes("text-xs text-orange-700")
+
             task_type_in = ui.select(
-                options=["sign", "automation", "monitor"],
-                value=(existing.task_type if existing else "sign"),
                 label="任务类型",
+                options=["sign", "automation", "monitor"],
+                value=initial_type
+                if initial_type in ("sign", "automation", "monitor")
+                else "sign",
             ).classes("w-full")
-            task_ref_in = ui.input(
-                "任务名", value=(existing.task_ref if existing else "")
+            ui.label(
+                "sign=签到 · automation=自动化 · monitor=监控；配置可跨账号共用"
+            ).classes("text-xs text-gray-500")
+
+            task_ref_in = ui.select(
+                label="任务名（配置可复用）",
+                options=task_opts or [""],
+                value=(
+                    existing.task_ref
+                    if existing
+                    and existing.task_ref
+                    in (task_opts or [existing.task_ref])
+                    else (task_opts[0] if task_opts else None)
+                ),
+                with_input=True,
             ).classes("w-full")
+            task_hint = ui.label("").classes("text-xs text-gray-500")
+
+            def _update_task_hint() -> None:
+                t = task_type_in.value or "sign"
+                opts = list_task_refs_for_plan(t, state.workdir)
+                if opts:
+                    task_hint.text = (
+                        f"可选任务 {len(opts)} 个（不同账号可选同一任务名）"
+                    )
+                else:
+                    dirs = {
+                        "sign": "signs/<任务名>/",
+                        "monitor": "monitors/<任务名>/",
+                        "automation": "automations/<任务名>/",
+                    }
+                    task_hint.text = (
+                        "暂无任务配置，请先在「配置管理」创建，目录 "
+                        + dirs.get(t, "")
+                    )
+                task_hint.update()
+
+            def on_task_type_change(e=None) -> None:
+                t = task_type_in.value or "sign"
+                opts = list(list_task_refs_for_plan(t, state.workdir))
+                cur = task_ref_in.value
+                if cur and cur not in opts:
+                    opts = [cur] + opts
+                task_ref_in.options = opts or [""]
+                if opts:
+                    task_ref_in.value = cur if cur in opts else opts[0]
+                else:
+                    task_ref_in.value = None
+                task_ref_in.update()
+                _update_task_hint()
+
+            task_type_in.on_value_change(on_task_type_change)
+            _update_task_hint()
+
             schedule_in = ui.input(
                 "时刻/cron",
                 value=(existing.schedule_expr if existing else "06:00:00"),
@@ -673,17 +766,25 @@ def _plans_block() -> Callable[[], None]:
 
             def save() -> None:
                 try:
+                    account_val = account_in.value
+                    if isinstance(account_val, str):
+                        account_val = account_val.strip()
+                    else:
+                        account_val = str(account_val or "").strip()
+                    task_ref_val = task_ref_in.value
+                    if isinstance(task_ref_val, str):
+                        task_ref_val = task_ref_val.strip()
+                    else:
+                        task_ref_val = str(task_ref_val or "").strip()
                     payload = {
                         "id": existing.id if existing else None,
-                        "account": (account_in.value or "").strip(),
+                        "account": account_val,
                         "task_type": task_type_in.value or "sign",
-                        "task_ref": (task_ref_in.value or "").strip(),
+                        "task_ref": task_ref_val,
                         "schedule_expr": (schedule_in.value or "").strip(),
                         "random_seconds": int(random_in.value or 0),
                         "max_retries": int(retries_in.value or 0),
                         "enabled": bool(enabled_in.value),
-                        # Keep last_run; next_run is recomputed by save_plan when
-                        # schedule/random/enable changes.
                         "next_run_at": existing.next_run_at if existing else None,
                         "last_run_at": existing.last_run_at if existing else None,
                     }
@@ -691,14 +792,17 @@ def _plans_block() -> Callable[[], None]:
                         ui.notify("账号和任务名必填", type="warning")
                         return
                     save_plan(payload, workdir=state.workdir)
-                    ui.notify("计划已保存", type="positive")
+                    ui.notify(
+                        f"计划已保存：{payload['account']} → {payload['task_ref']}",
+                        type="positive",
+                    )
                     close_dialog()
                     refresh(force=True)
                 except Exception as exc:  # noqa: BLE001
                     notify_error(exc)
 
             with ui.row().classes("gap-2"):
-                ui.button("保存", color="primary", on_click=save).props(
+                ui.button("保存", color="primary", on_click=save).style(
                     f"background:{PRIMARY} !important;"
                 )
                 ui.button("取消", on_click=close_dialog).props("outline")
