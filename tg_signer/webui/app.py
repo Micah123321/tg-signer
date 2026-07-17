@@ -13,17 +13,37 @@ from tg_signer.webui.data import (
     LOG_DIR,
     ConfigKind,
     delete_config,
+    delete_plan,
+    export_plans_json,
     get_workdir,
+    import_plans_json,
+    list_accounts,
+    list_job_runs,
     list_log_files,
+    list_plans,
     list_task_names,
     load_config,
     load_logs,
     load_sign_records,
     load_user_infos,
+    run_plan_now,
+    runtime_stats,
+    save_account,
     save_config,
+    save_plan,
+    set_plan_enabled,
 )
 from tg_signer.webui.interactive import InteractiveSignerConfig
 from tg_signer.webui.schema_utils import clean_schema
+
+# DESIGN.md tokens (Apple control console)
+PRIMARY = "#0066cc"
+INK = "#1d1d1f"
+CANVAS = "#ffffff"
+PARCHMENT = "#f5f5f7"
+SURFACE_TILE = "#272729"
+SUCCESS = "#34c759"
+FAIL = "#ff3b30"
 
 SIGNER_TEMPLATE: Dict[str, object] = {
     "chats": [
@@ -72,12 +92,16 @@ AUTH_STORAGE_KEY = "tg_signer_gui_auth_code"
 class UIState:
     def __init__(self) -> None:
         self.workdir: Path = get_workdir(DEFAULT_WORKDIR)
+        self.session_dir: Path = Path(".")
         self.log_path: Path = DEFAULT_LOG_FILE
         self.log_limit: int = 200
         self.record_filter: str = ""
 
     def set_workdir(self, path_str: str) -> None:
         self.workdir = get_workdir(Path(path_str).expanduser())
+
+    def set_session_dir(self, path_str: str) -> None:
+        self.session_dir = Path(path_str).expanduser()
 
     def set_log_path(self, path_str: str) -> None:
         self.log_path = Path(path_str).expanduser()
@@ -524,36 +548,392 @@ def log_block() -> Callable[[], None]:
 
 
 def top_controls(on_refresh: Callable[[], None]) -> None:
-    with ui.card().classes("w-full"):
-        ui.label("基础设置").classes("text-lg font-semibold")
-        with ui.row().classes("items-end w-full"):
+    with ui.card().classes("w-full").style(
+        f"background:{PARCHMENT};border:1px solid #e0e0e0;box-shadow:none;"
+    ):
+        ui.label("基础设置").classes("text-lg font-semibold").style(f"color:{INK};")
+        with ui.row().classes("items-end w-full gap-3 flex-wrap"):
             workdir_input = ui.input(
                 label="工作目录",
                 value=str(state.workdir),
                 placeholder=".signer",
-            ).classes("w-full")
+            ).classes("min-w-[220px]")
+            session_input = ui.input(
+                label="Session 目录",
+                value=str(state.session_dir),
+                placeholder=".",
+            ).classes("min-w-[220px]")
             ui.button(
                 "应用并刷新",
                 color="primary",
-                on_click=lambda: _apply_paths(workdir_input, on_refresh),
-            )
+                on_click=lambda: _apply_paths(workdir_input, session_input, on_refresh),
+            ).props("rounded").style(f"background:{PRIMARY} !important;")
 
 
-def _apply_paths(workdir_input, on_refresh: Callable[[], None]) -> None:
+def _apply_paths(workdir_input, session_input, on_refresh: Callable[[], None]) -> None:
     try:
         state.set_workdir(workdir_input.value or str(DEFAULT_WORKDIR))
-        ui.notify(f"已切换工作目录: {state.workdir}", type="positive")
+        state.set_session_dir(session_input.value or ".")
+        ui.notify(
+            f"已切换: workdir={state.workdir} session_dir={state.session_dir}",
+            type="positive",
+        )
     except Exception as exc:  # noqa: BLE001
         notify_error(exc)
         return
     on_refresh()
 
 
+def _hero_stats_block() -> Callable[[], None]:
+    container = ui.element("div").classes("w-full rounded-xl p-6 mb-3").style(
+        f"background:{SURFACE_TILE};color:#fff;"
+    )
+
+    def refresh() -> None:
+        container.clear()
+        stats = runtime_stats(state.workdir)
+        with container:
+            with ui.row().classes("w-full justify-between items-end flex-wrap gap-4"):
+                for label, value in (
+                    ("SCHEDULED", stats.scheduled),
+                    ("RUNNING", stats.running),
+                    ("FAILED", stats.failed),
+                    ("TOTAL", stats.total_plans),
+                ):
+                    with ui.column().classes("items-start gap-1"):
+                        ui.label(str(value)).style(
+                            "font-size:40px;font-weight:600;letter-spacing:-0.28px;line-height:1.1;"
+                        )
+                        ui.label(label).style(
+                            "font-size:12px;letter-spacing:-0.12px;opacity:0.8;"
+                        )
+                status = "运行中" if stats.scheduler_running else "未启动"
+                tick = stats.last_tick_at or "—"
+                with ui.column().classes("items-end gap-1"):
+                    ui.label(f"调度器 · {status}").style("font-size:14px;")
+                    ui.label(f"上次 tick: {tick}").style(
+                        "font-size:12px;opacity:0.7;"
+                    )
+
+    return refresh
+
+
+def _plans_block() -> Callable[[], None]:
+    root = ui.column().classes("w-full gap-3")
+
+    def open_editor(plan_id: int | None = None) -> None:
+        existing = None
+        if plan_id is not None:
+            for p in list_plans(state.workdir):
+                if p.id == plan_id:
+                    existing = p
+                    break
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-xl"):
+            ui.label("编辑计划" if existing else "新建计划").classes(
+                "text-lg font-semibold"
+            )
+            account_in = ui.input(
+                "账号", value=(existing.account if existing else "")
+            ).classes("w-full")
+            task_type_in = ui.select(
+                options=["sign", "automation", "monitor"],
+                value=(existing.task_type if existing else "sign"),
+                label="任务类型",
+            ).classes("w-full")
+            task_ref_in = ui.input(
+                "任务名", value=(existing.task_ref if existing else "")
+            ).classes("w-full")
+            schedule_in = ui.input(
+                "时刻/cron",
+                value=(existing.schedule_expr if existing else "06:00:00"),
+                placeholder="06:00:00 或 0 6 * * *",
+            ).classes("w-full")
+            random_in = ui.number(
+                "随机秒数",
+                value=(existing.random_seconds if existing else 0),
+                min=0,
+            ).classes("w-full")
+            retries_in = ui.number(
+                "最大重试",
+                value=(existing.max_retries if existing else 1),
+                min=0,
+            ).classes("w-full")
+            enabled_in = ui.switch(
+                "启用", value=(existing.enabled if existing else True)
+            )
+
+            def save() -> None:
+                try:
+                    payload = {
+                        "id": existing.id if existing else None,
+                        "account": (account_in.value or "").strip(),
+                        "task_type": task_type_in.value or "sign",
+                        "task_ref": (task_ref_in.value or "").strip(),
+                        "schedule_expr": (schedule_in.value or "").strip(),
+                        "random_seconds": int(random_in.value or 0),
+                        "max_retries": int(retries_in.value or 0),
+                        "enabled": bool(enabled_in.value),
+                        # Keep last_run; next_run is recomputed by save_plan when
+                        # schedule/random/enable changes.
+                        "next_run_at": existing.next_run_at if existing else None,
+                        "last_run_at": existing.last_run_at if existing else None,
+                    }
+                    if not payload["account"] or not payload["task_ref"]:
+                        ui.notify("账号和任务名必填", type="warning")
+                        return
+                    save_plan(payload, workdir=state.workdir)
+                    ui.notify("计划已保存", type="positive")
+                    dialog.close()
+                    refresh()
+                except Exception as exc:  # noqa: BLE001
+                    notify_error(exc)
+
+            with ui.row().classes("gap-2"):
+                ui.button("保存", color="primary", on_click=save).props(
+                    f"background:{PRIMARY} !important;"
+                )
+                ui.button("取消", on_click=dialog.close).props("outline")
+        dialog.open()
+
+    def refresh() -> None:
+        root.clear()
+        with root:
+            with ui.row().classes("w-full items-center justify-between flex-wrap gap-2"):
+                ui.label("计划表").classes("text-lg font-semibold").style(
+                    f"color:{INK};"
+                )
+                with ui.row().classes("gap-2"):
+                    ui.button("新建计划", color="primary", on_click=lambda: open_editor()).style(
+                        f"background:{PRIMARY} !important;"
+                    ).props("rounded")
+                    ui.button(
+                        "导出 JSON",
+                        on_click=lambda: ui.download(
+                            export_plans_json(state.workdir).encode("utf-8"),
+                            "schedule_plans.json",
+                        ),
+                    ).props("outline rounded")
+                    import_area = ui.textarea(
+                        label="导入 JSON",
+                        placeholder='粘贴 {"plans":[...]} 后点导入',
+                    ).classes("w-80")
+                    ui.button(
+                        "导入",
+                        on_click=lambda: _do_import(import_area),
+                    ).props("outline rounded")
+
+            plans = list_plans(state.workdir)
+            if not plans:
+                with ui.card().classes("w-full").style(
+                    f"background:{PARCHMENT};box-shadow:none;"
+                ):
+                    ui.label("暂无计划").style(
+                        "font-size:28px;font-weight:400;color:#1d1d1f;"
+                    )
+                    ui.label("创建账号绑定任务的每日计划，替代外部脚本串跑。").classes(
+                        "text-gray-500"
+                    )
+                    ui.button(
+                        "新建计划", color="primary", on_click=lambda: open_editor()
+                    ).style(f"background:{PRIMARY} !important;").props(
+                        "rounded"
+                    )
+                return
+
+            for idx, plan in enumerate(plans):
+                bg = CANVAS if idx % 2 == 0 else PARCHMENT
+                with ui.card().classes("w-full").style(
+                    f"background:{bg};box-shadow:none;border:1px solid #e0e0e0;"
+                ):
+                    with ui.row().classes(
+                        "w-full items-center justify-between flex-wrap gap-2"
+                    ):
+                        title = f"#{plan.id} {plan.account} · {plan.task_type}/{plan.task_ref}"
+                        ui.label(title).style(
+                            "font-size:17px;font-weight:600;color:#1d1d1f;"
+                        )
+                        badge = "启用" if plan.enabled else "暂停"
+                        color = SUCCESS if plan.enabled else "#7a7a7a"
+                        ui.badge(badge).style(
+                            f"background:{color};color:#fff;border-radius:9999px;"
+                        )
+                    ui.label(
+                        f"调度 {plan.schedule_expr} · 下次 {plan.next_run_at or '—'} · 上次 {plan.last_run_at or '—'}"
+                    ).classes("text-sm text-gray-600")
+                    with ui.row().classes("gap-2 flex-wrap mt-1"):
+                        ui.button(
+                            "立即执行",
+                            on_click=lambda p=plan: _run_now(p.id),
+                        ).props("rounded dense").style(
+                            f"background:{PRIMARY} !important;color:#fff;"
+                        )
+                        ui.button(
+                            "编辑",
+                            on_click=lambda p=plan: open_editor(p.id),
+                        ).props("outline rounded dense")
+                        ui.button(
+                            "暂停" if plan.enabled else "启用",
+                            on_click=lambda p=plan: _toggle(p.id, not p.enabled),
+                        ).props("outline rounded dense")
+                        ui.button(
+                            "删除",
+                            color="negative",
+                            on_click=lambda p=plan: _delete(p.id),
+                        ).props("outline rounded dense")
+
+    def _do_import(area) -> None:
+        try:
+            n = import_plans_json(area.value or "", workdir=state.workdir)
+            ui.notify(f"已导入 {n} 条计划", type="positive")
+            refresh()
+        except Exception as exc:  # noqa: BLE001
+            notify_error(exc)
+
+    def _toggle(plan_id: int, enabled: bool) -> None:
+        try:
+            set_plan_enabled(plan_id, enabled, workdir=state.workdir)
+            refresh()
+        except Exception as exc:  # noqa: BLE001
+            notify_error(exc)
+
+    def _delete(plan_id: int) -> None:
+        try:
+            delete_plan(plan_id, workdir=state.workdir)
+            ui.notify("已删除计划", type="positive")
+            refresh()
+        except Exception as exc:  # noqa: BLE001
+            notify_error(exc)
+
+    def _run_now(plan_id: int) -> None:
+        async def _go():
+            try:
+                await run_plan_now(plan_id)
+                ui.notify("已触发执行", type="positive")
+                refresh()
+            except Exception as exc:  # noqa: BLE001
+                notify_error(exc)
+
+        # NiceGUI will schedule the coroutine when button is async-compatible;
+        # use create_task via asyncio for safety.
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(_go())
+        except RuntimeError:
+            asyncio.ensure_future(_go())
+
+    return refresh
+
+
+def _accounts_block() -> Callable[[], None]:
+    root = ui.column().classes("w-full gap-3")
+
+    def refresh() -> None:
+        root.clear()
+        with root:
+            ui.label("账号").classes("text-lg font-semibold")
+            ui.label("根据 session 目录发现账号，可设置代理。").classes(
+                "text-sm text-gray-500"
+            )
+            accounts = list_accounts(state.workdir, state.session_dir)
+            if not accounts:
+                ui.label("未发现账号 session。请先 CLI login。").classes("text-gray-500")
+                return
+            for acc in accounts:
+                with ui.card().classes("w-full").style(
+                    f"background:{PARCHMENT};box-shadow:none;"
+                ):
+                    with ui.row().classes(
+                        "w-full items-end gap-3 flex-wrap justify-between"
+                    ):
+                        with ui.column().classes("gap-1"):
+                            ui.label(acc.name).style("font-size:21px;font-weight:600;")
+                            sess = "有 session" if acc.session_present else "无 session"
+                            ui.label(sess).classes("text-sm text-gray-600")
+                        proxy_in = ui.input(
+                            "代理",
+                            value=acc.proxy or "",
+                            placeholder="socks5://host:port",
+                        ).classes("min-w-[280px]")
+                        enabled_in = ui.switch("启用", value=acc.enabled)
+
+                        def save(
+                            name=acc.name, proxy_in=proxy_in, enabled_in=enabled_in
+                        ):
+                            try:
+                                save_account(
+                                    {
+                                        "name": name,
+                                        "proxy": (proxy_in.value or "").strip() or None,
+                                        "enabled": bool(enabled_in.value),
+                                        "labels": "",
+                                    },
+                                    workdir=state.workdir,
+                                    session_dir=state.session_dir,
+                                )
+                                ui.notify(f"已保存 {name}", type="positive")
+                            except Exception as exc:  # noqa: BLE001
+                                notify_error(exc)
+
+                        ui.button("保存", color="primary", on_click=save).style(
+                            f"background:{PRIMARY} !important;"
+                        ).props("rounded")
+
+    return refresh
+
+
+def _jobs_block() -> Callable[[], None]:
+    root = ui.column().classes("w-full gap-2")
+
+    def refresh() -> None:
+        root.clear()
+        with root:
+            ui.label("执行历史").classes("text-lg font-semibold")
+            jobs = list_job_runs(state.workdir, limit=80)
+            if not jobs:
+                ui.label("尚无执行记录").classes("text-gray-500")
+                return
+            rows = [
+                {
+                    "id": j.id,
+                    "account": j.account,
+                    "task": f"{j.task_type}/{j.task_ref}",
+                    "status": j.status.value
+                    if hasattr(j.status, "value")
+                    else j.status,
+                    "attempt": j.attempt,
+                    "started": j.started_at or "",
+                    "finished": j.finished_at or "",
+                    "error": (j.error or "")[:120],
+                    "source": j.source,
+                }
+                for j in jobs
+            ]
+            ui.table(
+                columns=[
+                    {"name": "id", "label": "ID", "field": "id"},
+                    {"name": "account", "label": "账号", "field": "account"},
+                    {"name": "task", "label": "任务", "field": "task"},
+                    {"name": "status", "label": "状态", "field": "status"},
+                    {"name": "attempt", "label": "次数", "field": "attempt"},
+                    {"name": "started", "label": "开始", "field": "started"},
+                    {"name": "finished", "label": "结束", "field": "finished"},
+                    {"name": "error", "label": "错误", "field": "error"},
+                    {"name": "source", "label": "来源", "field": "source"},
+                ],
+                rows=rows,
+                pagination=20,
+            ).classes("w-full").props("flat dense")
+
+    return refresh
+
+
 def _build_dashboard(container) -> None:
     with container:
-        ui.label("TG Signer Web 控制台").classes(
+        ui.label("TG Signer 运维台").classes(
             "text-2xl font-semibold tracking-wide mb-2"
-        )
+        ).style(f"color:{INK};")
         refreshers: list[Callable[[], None]] = []
         refresh_records: "SignRecordBlock"
 
@@ -562,9 +942,13 @@ def _build_dashboard(container) -> None:
                 refresh()
 
         top_controls(refresh_all)
+        refreshers.append(_hero_stats_block())
 
         with ui.tabs().classes("w-full") as tabs:
+            tab_plans = ui.tab("计划表")
+            tab_accounts = ui.tab("账号")
             tab_configs = ui.tab("配置管理")
+            tab_jobs = ui.tab("执行历史")
             tab_users = ui.tab("用户信息")
             tab_records = ui.tab("签到记录")
             tab_logs = ui.tab("日志")
@@ -574,7 +958,11 @@ def _build_dashboard(container) -> None:
             tabs.update()
             refresh_records.filter_input.set_value(task_name)
 
-        with ui.tab_panels(tabs, value=tab_configs).classes("w-full"):
+        with ui.tab_panels(tabs, value=tab_plans).classes("w-full"):
+            with ui.tab_panel(tab_plans):
+                refreshers.append(_plans_block())
+            with ui.tab_panel(tab_accounts):
+                refreshers.append(_accounts_block())
             with ui.tab_panel(tab_configs):
                 ui.label(
                     "管理 signer 和 monitor 的配置文件，支持查看、编辑和删除。"
@@ -589,25 +977,25 @@ def _build_dashboard(container) -> None:
                         )
                     with ui.tab_panel(tab_monitor):
                         refreshers.append(MonitorBlock(MONITOR_TEMPLATE))
-
+            with ui.tab_panel(tab_jobs):
+                refreshers.append(_jobs_block())
             with ui.tab_panel(tab_users):
                 ui.label("查看当前已登录账户信息 (users/*/me.json)。").classes(
                     "text-gray-600"
                 )
                 refreshers.append(user_info_block())
-
             with ui.tab_panel(tab_records):
                 ui.label(
                     "签到记录（优先读取 SQLite，兼容旧 sign_record.json）"
                 ).classes("text-gray-600")
                 refresh_records = SignRecordBlock()
                 refreshers.append(refresh_records)
-
             with ui.tab_panel(tab_logs):
                 ui.label("查看日志文件的最新行。").classes("text-gray-600")
                 refreshers.append(log_block())
 
         refresh_all()
+        ui.timer(5.0, refresh_all)
 
 
 def _auth_gate(container, auth_code: str, on_success: Callable[[], None]) -> None:
@@ -677,7 +1065,48 @@ def build_ui(auth_code: str = None) -> None:
     _auth_gate(root, auth_code, render_dashboard)
 
 
-def main(host: str = None, port: int = None, storage_secret: str = None) -> None:
+def main(
+    host: str = None,
+    port: int = None,
+    storage_secret: str = None,
+    *,
+    enable_scheduler: bool = False,
+    workdir: str = None,
+    session_dir: str = ".",
+    proxy: str = None,
+    num_of_dialogs: int = 50,
+) -> None:
+    if workdir:
+        state.set_workdir(workdir)
+    if session_dir:
+        state.set_session_dir(session_dir)
+
+    if enable_scheduler:
+
+        from tg_signer.runtime.service import RuntimeService, set_runtime
+
+        async def _boot_runtime():
+            rt = RuntimeService(
+                workdir=str(state.workdir),
+                session_dir=str(state.session_dir),
+                default_proxy=proxy,
+                num_of_dialogs=num_of_dialogs,
+            )
+            await rt.start()
+            set_runtime(rt)
+
+        # NiceGUI shares the process loop; schedule runtime start at app startup.
+        app.on_startup(_boot_runtime)
+
+        async def _shutdown_runtime():
+            from tg_signer.runtime.service import get_runtime
+
+            rt = get_runtime()
+            if rt is not None:
+                await rt.stop()
+
+        app.on_shutdown(_shutdown_runtime)
+
     ui.run(
         build_ui,
         title="TG Signer WebUI",

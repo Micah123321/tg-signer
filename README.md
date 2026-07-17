@@ -144,7 +144,11 @@ docker run -d --name tg-signer-webui \
 ```
 
 浏览器访问 `http://127.0.0.1:8080`，使用 `TG_SIGNER_GUI_AUTHCODE` 中的授权码进入。  
-镜像默认命令为 `tg-signer webgui --host 0.0.0.0 --port 8080`，一般无需再传 `command`。
+镜像默认命令为 `tg-signer serve`（WebUI + **进程内计划调度器**），可在页面「计划表 / 账号」配置「账号×任务×时刻」并替代外部 bash 串跑 `run-once`。
+
+- 仅要配置编辑、不要调度：将启动命令改为 `tg-signer webgui --host 0.0.0.0 --port 8080`
+- 使用 `serve` 时**不要**再对同一账号任务启动 CLI `tg-signer run` 常驻，以免双重定时
+- 首次仍需 `tg-signer login -a <account>` 生成 session；Web 侧发现 session 并绑定代理/计划
 
 #### 5. 环境变量速查
 

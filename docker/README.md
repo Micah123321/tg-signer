@@ -9,7 +9,7 @@
 | 镜像 | 内容 | 默认启动 |
 |------|------|----------|
 | `ghcr.io/micah123321/tg-signer:<tag>` / `:latest` | CLI + `tgcrypto` | 无固定 CMD，需传入 `tg-signer ...` |
-| `ghcr.io/micah123321/tg-signer:<tag>-webui` / `:latest-webui` | CLI + WebUI（nicegui） | `tg-signer webgui --host 0.0.0.0 --port 8080` |
+| `ghcr.io/micah123321/tg-signer:<tag>-webui` / `:latest-webui` | CLI + WebUI（nicegui） | `tg-signer serve --host 0.0.0.0 --port 8080` |
 
 ### 自动构建策略
 

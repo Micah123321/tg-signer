@@ -627,14 +627,85 @@ def migrate_sign_records(obj, legacy_user_id: str | None, delete_json: bool):
     envvar="TG_SIGNER_GUI_AUTHCODE",
     help="授权码，也可通过环境变量`TG_SIGNER_GUI_AUTHCODE`设置。若存在则访问界面时需要正确输入。",
 )
+@click.option(
+    "--enable-scheduler/--no-enable-scheduler",
+    "enable_scheduler",
+    default=False,
+    show_default=True,
+    help="是否在 WebUI 进程内启动计划调度器（建议用 serve 命令）",
+)
+@click.pass_obj
 def webgui(
+    obj,
     host: str = None,
     port: int = None,
     storage_secret: str = None,
     auth_code: str = None,
+    enable_scheduler: bool = False,
 ):
     from tg_signer.webui import AUTH_CODE_ENV, main
 
     if auth_code:
         os.environ[AUTH_CODE_ENV] = auth_code
-    main(host=host, port=port, storage_secret=storage_secret)
+    main(
+        host=host,
+        port=port,
+        storage_secret=storage_secret,
+        enable_scheduler=enable_scheduler,
+        workdir=obj.get("workdir"),
+        session_dir=obj.get("session_dir") or ".",
+        proxy=obj.get("proxy"),
+    )
+
+
+@tg_signer.command(
+    name="serve",
+    help="启动运维台：WebUI + 进程内计划调度器（替代外部 bash 串跑 run-once）",
+)
+@click.option("--host", "-H", "host", default="0.0.0.0", help="监听地址")
+@click.option("--port", "-P", "port", default=8080, help="监听端口")
+@click.option(
+    "--storage-secret",
+    "-S",
+    "storage_secret",
+    default=None,
+    help="存储密钥，若不输入则每次启动会使用随机字符串",
+)
+@click.option(
+    "--auth-code",
+    "auth_code",
+    default=None,
+    envvar="TG_SIGNER_GUI_AUTHCODE",
+    help="授权码，也可通过环境变量`TG_SIGNER_GUI_AUTHCODE`设置",
+)
+@click.option(
+    "--num-of-dialogs",
+    "-n",
+    default=50,
+    show_default=True,
+    type=int,
+    help="签到时获取最近 N 个对话",
+)
+@click.pass_obj
+def serve(
+    obj,
+    host: str = None,
+    port: int = None,
+    storage_secret: str = None,
+    auth_code: str = None,
+    num_of_dialogs: int = 50,
+):
+    from tg_signer.webui import AUTH_CODE_ENV, main
+
+    if auth_code:
+        os.environ[AUTH_CODE_ENV] = auth_code
+    main(
+        host=host,
+        port=port,
+        storage_secret=storage_secret,
+        enable_scheduler=True,
+        workdir=obj.get("workdir"),
+        session_dir=obj.get("session_dir") or ".",
+        proxy=obj.get("proxy"),
+        num_of_dialogs=num_of_dialogs,
+    )

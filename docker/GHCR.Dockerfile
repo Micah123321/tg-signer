@@ -44,4 +44,4 @@ EXPOSE 8080
 
 WORKDIR /opt/tg-signer
 
-CMD ["tg-signer", "webgui", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["tg-signer", "serve", "--host", "0.0.0.0", "--port", "8080"]

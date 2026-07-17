@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
 
 from tg_signer.config import BaseJSONConfig, MonitorConfig, SignConfigV3
+from tg_signer.runtime.models import AccountMeta, JobRun, RuntimeStats, SchedulePlan
+from tg_signer.runtime.service import get_runtime
+from tg_signer.runtime.store import RuntimeStore
 from tg_signer.sign_record_store import SignRecordStore
 
 ConfigKind = Literal["signer", "monitor"]
@@ -278,3 +281,139 @@ def load_logs(
 ) -> Tuple[Path, List[str]]:
     path = _resolve_log_path(log_path)
     return path, tail_file(path, limit=limit)
+
+
+def get_runtime_store(
+    workdir: Optional[Path | str] = None,
+    session_dir: Optional[Path | str] = None,
+) -> RuntimeStore:
+    rt = get_runtime()
+    if rt is not None:
+        return rt.store
+    base = get_workdir(workdir)
+    return RuntimeStore(base, session_dir=session_dir or Path("."))
+
+
+def list_accounts(
+    workdir: Optional[Path | str] = None,
+    session_dir: Optional[Path | str] = None,
+) -> List[AccountMeta]:
+    return get_runtime_store(workdir, session_dir).list_accounts_merged(session_dir)
+
+
+def save_account(
+    account: AccountMeta | dict,
+    workdir: Optional[Path | str] = None,
+    session_dir: Optional[Path | str] = None,
+) -> AccountMeta:
+    store = get_runtime_store(workdir, session_dir)
+    if isinstance(account, dict):
+        account = AccountMeta(
+            name=str(account["name"]),
+            proxy=account.get("proxy"),
+            enabled=bool(account.get("enabled", True)),
+            labels=str(account.get("labels") or ""),
+        )
+    return store.upsert_account(account)
+
+
+def list_plans(workdir: Optional[Path | str] = None) -> List[SchedulePlan]:
+    return get_runtime_store(workdir).list_plans()
+
+
+def save_plan(
+    plan: SchedulePlan | dict,
+    workdir: Optional[Path | str] = None,
+) -> SchedulePlan:
+    rt = get_runtime()
+    if isinstance(plan, dict):
+        plan = SchedulePlan.from_dict(plan)
+    if rt is not None:
+        if plan.id is None:
+            return rt.create_plan(plan)
+        return rt.update_plan(plan)
+    # Offline path (no RuntimeService): mirror prepare_plan rules.
+    store = get_runtime_store(workdir)
+    from tg_signer.runtime.models import isoformat
+    from tg_signer.runtime.scheduler import compute_next_run, normalize_schedule_expr
+    from tg_signer.utils import get_now
+
+    force_next = plan.id is None
+    if plan.id is not None:
+        old = store.get_plan(plan.id)
+        if old is not None:
+            try:
+                old_expr = normalize_schedule_expr(old.schedule_expr)
+                new_expr = normalize_schedule_expr(plan.schedule_expr)
+            except ValueError:
+                old_expr, new_expr = old.schedule_expr, plan.schedule_expr
+            if (
+                old_expr != new_expr
+                or int(old.random_seconds or 0) != int(plan.random_seconds or 0)
+                or (not old.enabled and plan.enabled)
+            ):
+                force_next = True
+    plan.schedule_expr = normalize_schedule_expr(plan.schedule_expr)
+    if plan.enabled and (force_next or not plan.next_run_at):
+        plan.next_run_at = isoformat(
+            compute_next_run(
+                plan.schedule_expr,
+                base=get_now(),
+                random_seconds=plan.random_seconds,
+            )
+        )
+    if plan.id is None:
+        return store.create_plan(plan)
+    return store.update_plan(plan)
+
+
+def delete_plan(plan_id: int, workdir: Optional[Path | str] = None) -> bool:
+    return get_runtime_store(workdir).delete_plan(plan_id)
+
+
+def set_plan_enabled(
+    plan_id: int, enabled: bool, workdir: Optional[Path | str] = None
+) -> bool:
+    return get_runtime_store(workdir).set_plan_enabled(plan_id, enabled)
+
+
+def list_job_runs(
+    workdir: Optional[Path | str] = None, limit: int = 50
+) -> List[JobRun]:
+    return get_runtime_store(workdir).list_recent_jobs(limit=limit)
+
+
+def export_plans_json(workdir: Optional[Path | str] = None) -> str:
+    return get_runtime_store(workdir).export_plans_json()
+
+
+def import_plans_json(
+    text: str,
+    *,
+    replace: bool = False,
+    workdir: Optional[Path | str] = None,
+) -> int:
+    return get_runtime_store(workdir).import_plans_json(text, replace=replace)
+
+
+def runtime_stats(workdir: Optional[Path | str] = None) -> RuntimeStats:
+    rt = get_runtime()
+    if rt is not None:
+        return rt.stats()
+    store = get_runtime_store(workdir)
+    plans = store.list_plans()
+    return RuntimeStats(
+        scheduled=len([p for p in plans if p.enabled]),
+        running=store.count_running_jobs(),
+        failed=store.count_jobs_by_status("failed"),
+        total_plans=len(plans),
+        last_tick_at=None,
+        scheduler_running=False,
+    )
+
+
+async def run_plan_now(plan_id: int) -> None:
+    rt = get_runtime()
+    if rt is None:
+        raise RuntimeError("调度器未启动，请使用 tg-signer serve 或启用调度器")
+    await rt.run_plan_now(plan_id)
