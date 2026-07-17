@@ -58,18 +58,21 @@ uv tool install -U "tg-signer[gui]"
 
 合法版本 tag 示例：`v0.9.0`、`0.9.0`、`v0.9.0b2`。`main` 每次 push 会自动编译并推送镜像。更细的目录结构、本地构建与 Compose 见 [docker/README.md](./docker/README.md)。
 
-#### 推荐：Docker Compose 一键部署（CLI + WebUI）
+#### 推荐：Docker Compose 一键部署（Web 运维台）
 
-需要同时常驻签到与 WebUI 时，使用仓库内 [deploy/](./deploy/) 目录（预构建 GHCR 镜像、共享数据卷）：
+默认用 [deploy/](./deploy/) 常驻 **`tg-signer serve`**（WebUI + 计划调度），在浏览器配置多账号与「账号×任务×时刻」，替代外部 bash 串跑 `run-once`：
 
 ```sh
-cd deploy
-cp .env.example .env   # 修改授权码、代理、任务名等
-# 首次：登录 + 配置签到任务（见 deploy/README.md）
+git clone https://github.com/Micah123321/tg-signer.git
+cd tg-signer/deploy
+cp .env.example .env   # 修改授权码、代理等
 docker compose up -d
+# 浏览器打开 http://127.0.0.1:8080 → 账号 / 计划表
+# 首次还需 login 与任务配置，见 deploy/README.md
 ```
 
-完整步骤（登录、任务配置、运维、故障排查）见 [deploy/README.md](./deploy/README.md)。
+完整步骤（登录、任务、计划表对照旧脚本、运维、故障排查）见 [deploy/README.md](./deploy/README.md)。  
+可选 `docker compose --profile legacy-run` 仅用于旧版单任务 CLI `run` 常驻，**勿与计划调度叠用**。
 
 #### 1. 准备数据目录
 

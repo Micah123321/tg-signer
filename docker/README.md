@@ -168,9 +168,9 @@ docker run -d --name tg-signer \
 
 ## Docker Compose
 
-### 推荐：预构建镜像常驻部署（CLI + WebUI）
+### 推荐：预构建镜像常驻部署（Web 运维台）
 
-长期运行签到 + WebUI 请使用仓库根目录下的 **[deploy/](../deploy/)**（`ghcr.io` 预构建镜像、`.env`、共享 `data/`）。本目录的 `docker-compose.yml` 面向**本地构建**调试，不是首选生产路径。详见 [deploy/README.md](../deploy/README.md)。
+长期运行请使用仓库根目录 **[deploy/](../deploy/)**：默认 `tg-signer serve`（WebUI + 计划调度）、`.env`、共享 `data/`。多账号计划表用法与旧 bash 串跑对照见 [deploy/README.md](../deploy/README.md)。本目录的 `docker-compose.yml` 面向**本地构建**调试，不是首选生产路径。
 
 ### 本地构建 Compose（本目录）
 
@@ -224,6 +224,7 @@ services:
   tg-signer-webui:
     image: ghcr.io/micah123321/tg-signer:latest-webui
     container_name: tg-signer-webui
+    command: ["tg-signer", "serve", "--host", "0.0.0.0", "--port", "8080"]
     volumes:
       - $PWD:/opt/tg-signer
     ports:
@@ -234,6 +235,8 @@ services:
       - TG_SIGNER_GUI_AUTHCODE=change-me
     restart: unless-stopped
 ```
+
+生产多账号计划调度请优先用 [deploy/](../deploy/)（已默认 `serve`）。
 
 ## 时区
 

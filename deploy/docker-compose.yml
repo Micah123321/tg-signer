@@ -1,30 +1,19 @@
 # tg-signer 一键部署（预构建 GHCR 镜像）
 # 用法见 deploy/README.md
 #
-# 首次使用前请：
-#   1. cp .env.example .env 并按环境修改
-#   2. 完成 login 与任务配置（见 README）
-#   3. docker compose up -d
+# 最短路径：
+#   git clone https://github.com/Micah123321/tg-signer.git
+#   cd tg-signer/deploy
+#   cp .env.example .env
+#   docker compose up -d
+# 首次还需 login / 任务配置 / 计划表，见 README。
+#
+# 可选：旧版单任务 CLI 常驻（profile: legacy-run）
+#   docker compose --profile legacy-run up -d
+#   切勿与 serve 同时对同一账号任务使用，以免双重定时
 
 services:
-  tg-signer:
-    image: ghcr.io/micah123321/tg-signer:${TG_IMAGE_TAG:-latest}
-    container_name: tg-signer
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
-      TG_PROXY: ${TG_PROXY:-}
-      TG_ACCOUNT: ${TG_ACCOUNT:-my_account}
-      TG_SESSION_STRING: ${TG_SESSION_STRING:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-}
-    volumes:
-      - ./data:/opt/tg-signer
-    command: ["tg-signer", "run", "${TG_SIGN_TASK:-my_sign}"]
-
+  # 主服务：Web 运维台 + 计划调度（多账号、多任务）
   tg-signer-webui:
     image: ghcr.io/micah123321/tg-signer:${TG_IMAGE_TAG:-latest}-webui
     container_name: tg-signer-webui
@@ -44,5 +33,36 @@ services:
       - ./data:/opt/tg-signer
     ports:
       - "${WEBUI_PORT:-8080}:8080"
-    # 显式 webgui：与 CLI `run` 双服务共存；勿改用 `serve`（内建调度会与 CLI run 双重定时）
-    command: ["tg-signer", "webgui", "--host", "0.0.0.0", "--port", "8080"]
+    # serve = WebUI + 进程内调度器；计划表驱动 run-once，替代外部 bash 串跑
+    command:
+      [
+        "tg-signer",
+        "serve",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
+        "-n",
+        "${TG_NUM_OF_DIALOGS:-50}",
+      ]
+
+  # 可选：旧版「单账号 + 单任务」CLI 常驻（仅当不用计划表时启用）
+  # docker compose --profile legacy-run up -d
+  tg-signer:
+    profiles: ["legacy-run"]
+    image: ghcr.io/micah123321/tg-signer:${TG_IMAGE_TAG:-latest}
+    container_name: tg-signer
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      TG_PROXY: ${TG_PROXY:-}
+      TG_ACCOUNT: ${TG_ACCOUNT:-my_account}
+      TG_SESSION_STRING: ${TG_SESSION_STRING:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+    volumes:
+      - ./data:/opt/tg-signer
+    command: ["tg-signer", "run", "${TG_SIGN_TASK:-my_sign}"]

@@ -262,5 +262,5 @@ HANDLERS = {"my_hello": hello}
 本地建议命令：
 
 ```sh
-python -m pytest -vv tests/test_automation_state.py tests/test_automation_handlers.py tests/test_automation_engine.py
+uv run pytest -vv tests/test_automation_state.py tests/test_automation_handlers.py tests/test_automation_engine.py
 ```

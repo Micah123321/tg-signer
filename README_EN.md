@@ -63,20 +63,24 @@ Valid version tag examples: `v0.9.0`, `0.9.0`, `v0.9.0b2`. Every push to `main`
 builds and publishes images automatically. For directory layout, local builds,
 and Compose, see [docker/README.md](./docker/README.md).
 
-#### Recommended: Docker Compose (CLI + WebUI)
+#### Recommended: Docker Compose (ops console)
 
-To run check-ins and the WebUI as long-lived services, use the [deploy/](./deploy/)
-directory (prebuilt GHCR images, shared data volume):
+Use [deploy/](./deploy/) to run a long-lived **`tg-signer serve`** process (WebUI +
+in-process scheduler). Configure multi-account plans in the browser instead of
+host bash loops of `run-once`:
 
 ```sh
-cd deploy
-cp .env.example .env   # set auth code, proxy, task name, etc.
-# First time: login + configure the sign task (see deploy/README.md)
+git clone https://github.com/Micah123321/tg-signer.git
+cd tg-signer/deploy
+cp .env.example .env   # auth code, proxy, etc.
 docker compose up -d
+# Open http://127.0.0.1:8080 → Accounts / Schedule
+# First-time login + task setup: see deploy/README.md
 ```
 
-Full steps (login, task setup, ops, troubleshooting) are in
-[deploy/README.md](./deploy/README.md).
+Full steps are in [deploy/README.md](./deploy/README.md). Optional
+`docker compose --profile legacy-run` starts the old single-task CLI `run`
+container — **do not** combine it with plan scheduling for the same account/task.
 
 #### 1. Prepare a data directory
 
@@ -155,8 +159,15 @@ docker run -d --name tg-signer-webui \
 
 Open `http://127.0.0.1:8080` and enter the auth code from
 `TG_SIGNER_GUI_AUTHCODE`. The image default command is
-`tg-signer webgui --host 0.0.0.0 --port 8080`, so you usually do not need an extra
-`command`.
+`tg-signer serve` (WebUI + in-process schedule planner). Use the
+Accounts / Schedule tabs for multi-account daily plans instead of host bash
+`run-once` loops.
+
+- Config-only WebUI (no scheduler): override command to
+  `tg-signer webgui --host 0.0.0.0 --port 8080`
+- Do **not** also run CLI `tg-signer run` for the same account/task while
+  `serve` is scheduling it
+- Login still requires interactive `tg-signer login -a <account>` first
 
 #### 5. Environment variables
 

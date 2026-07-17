@@ -111,10 +111,10 @@ This file guides agents/developers collaborating in the `tg-signer` repository. 
   - `line-length = 88`
   - Additional enabled lint rules: `I`, `B`, `W`, `C4`
 - Before submitting, run at least:
-  - `python -m ruff check .`
-  - `python -m ruff format .`
-  - `python -m pytest -vv tests/`
-- Run `tox` for cross-Python validation when needed (`py310`, `py311`, `py312`).
+  - `uv run ruff check .`
+  - `uv run ruff format .`
+  - `uv run pytest -vv tests/`
+- Run `uv run tox` for cross-Python validation when needed (`py310`, `py311`, `py312`).
 
 ## Change Strategy
 - Automation first: new rule-driven capabilities should go into `tg_signer/automation/`. Do not keep expanding the responsibility surface of `monitor`.
